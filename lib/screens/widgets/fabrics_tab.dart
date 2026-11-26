@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import '../../core/utils/id.dart';
 import '../../core/utils/parsing.dart';
 import '../../models/fabric_stock.dart';
+import 'form_error.dart';
+import 'search_section.dart';
 
 class FabricsTab extends StatelessWidget {
   const FabricsTab({
@@ -21,7 +23,9 @@ class FabricsTab extends StatelessWidget {
   final NumberFormat currency;
   final void Function(FabricStock fabric, {bool mergeIfMatch}) onSaveFabric;
   final void Function(String id) onDeleteFabric;
-  final void Function(String id, double extraLengthMeters) onAddStock;
+  final void Function(
+          String id, double extraLengthMeters, double newPricePerMeter)
+      onAddStock;
 
   @override
   Widget build(BuildContext context) {
@@ -48,8 +52,8 @@ class FabricsTab extends StatelessWidget {
                 ),
                 _StatData(
                   icon: Icons.crop_square_rounded,
-                  label: 'Area total',
-                  value: '${totalArea.toStringAsFixed(1)} m²',
+                  label: 'Área total',
+                  value: '${formatFixed(totalArea, 1)} m²',
                   color: const Color(0xFF059669),
                 ),
                 _StatData(
@@ -60,7 +64,7 @@ class FabricsTab extends StatelessWidget {
                 ),
                 _StatData(
                   icon: Icons.content_cut_rounded,
-                  label: 'Pecas',
+                  label: 'Peças',
                   value: '$pieceCount',
                   color: const Color(0xFF7C3AED),
                 ),
@@ -74,7 +78,10 @@ class FabricsTab extends StatelessWidget {
                 subtitle: 'Toque em + para cadastrar seu primeiro tecido.',
               )
             else
-              ...fabrics.map((FabricStock fabric) => _FabricCard(
+              SearchSection<FabricStock>(
+                  items: fabrics,
+                  textOf: (FabricStock f) => '${f.name} ${f.storeName}',
+                  itemBuilder: (FabricStock fabric) => _FabricCard(
                     fabric: fabric,
                     currency: currency,
                     onTap: () => showFabricFormSheet(
@@ -174,15 +181,13 @@ class _DashboardCard extends StatelessWidget {
                     child: Icon(icon, color: Colors.white, size: 20),
                   ),
                   const SizedBox(width: 12),
-                  Text(
-                    title,
+                  Expanded(child: Text(title,
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
                       fontSize: 16,
                       letterSpacing: -0.2,
-                    ),
-                  ),
+                    ))),
                 ],
               ),
             ),
@@ -193,7 +198,7 @@ class _DashboardCard extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: stats
-                    .map((s) => _StatTile(data: s))
+                    .map((s) => Expanded(child: _StatTile(data: s)))
                     .toList(),
               ),
             ),
@@ -222,13 +227,19 @@ class _StatTile extends StatelessWidget {
           child: Icon(data.icon, color: data.color, size: 22),
         ),
         const SizedBox(height: 8),
-        Text(
-          data.value,
-          style: const TextStyle(
-            fontWeight: FontWeight.w800,
-            fontSize: 14,
-            color: Color(0xFF0F172A),
-            letterSpacing: -0.3,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              data.value,
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 14,
+                color: Color(0xFF0F172A),
+                letterSpacing: -0.3,
+              ),
+            ),
           ),
         ),
         const SizedBox(height: 2),
@@ -366,12 +377,12 @@ class _FabricCard extends StatelessWidget {
                                   _Chip(
                                     icon: Icons.straighten_rounded,
                                     text:
-                                        '${fabric.widthMeters.toStringAsFixed(2)}m larg.',
+                                        '${formatNumber(fabric.widthMeters * 100)} cm larg.',
                                   ),
                                   _Chip(
                                     icon: Icons.inventory_2_outlined,
                                     text:
-                                        '${fabric.stockLengthMeters.toStringAsFixed(2)}m',
+                                        '${formatFixed(fabric.stockLengthMeters, 2)}m',
                                     highlight: lowStock,
                                   ),
                                   _Chip(
@@ -507,7 +518,9 @@ Future<void> showFabricFormSheet(
   BuildContext context, {
   required void Function(FabricStock fabric, {bool mergeIfMatch}) onSaveFabric,
   required void Function(String id) onDeleteFabric,
-  required void Function(String id, double extraLengthMeters) onAddStock,
+  required void Function(
+          String id, double extraLengthMeters, double newPricePerMeter)
+      onAddStock,
   FabricStock? initial,
 }) async {
   final bool isEdit = initial != null;
@@ -516,16 +529,28 @@ Future<void> showFabricFormSheet(
   final TextEditingController storeCtrl =
       TextEditingController(text: initial?.storeName ?? '');
   final TextEditingController widthCtrl = TextEditingController(
-      text: initial != null ? initial.widthMeters.toString() : '');
+      text: initial != null ? formatNumber(initial.widthMeters * 100) : '');
   final TextEditingController stockCtrl = TextEditingController(
-      text: initial != null ? initial.stockLengthMeters.toString() : '');
+      text: initial != null ? formatNumber(initial.stockLengthMeters) : '');
   final TextEditingController priceCtrl = TextEditingController(
-      text: initial != null ? initial.pricePerMeter.toString() : '');
+      text: initial != null ? formatNumber(initial.pricePerMeter) : '');
   bool mergeIfMatch = true;
+  String? formError;
+
+  // Campo não alterado mantem o valor original, sem perder casas decimais.
+  double read(FormReader reader, String label, TextEditingController ctrl,
+      double? original,
+      {bool thousands = false}) {
+    if (original != null && ctrl.text == formatNumber(original)) {
+      return original;
+    }
+    return reader.number(label, ctrl.text, thousands: thousands);
+  }
 
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -599,7 +624,7 @@ Future<void> showFabricFormSheet(
                               const TextInputType.numberWithOptions(
                                   decimal: true),
                           decoration: const InputDecoration(
-                            labelText: 'Largura (m)',
+                            labelText: 'Largura (cm)',
                             prefixIcon: Icon(Icons.straighten_outlined),
                           ),
                         ),
@@ -612,7 +637,7 @@ Future<void> showFabricFormSheet(
                               const TextInputType.numberWithOptions(
                                   decimal: true),
                           decoration: const InputDecoration(
-                            labelText: 'Estoque (m)',
+                            labelText: 'Estoque (metros)',
                             prefixIcon: Icon(Icons.inventory_2_outlined),
                           ),
                         ),
@@ -625,7 +650,7 @@ Future<void> showFabricFormSheet(
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
                     decoration: const InputDecoration(
-                      labelText: 'Preco por metro linear (R\$)',
+                      labelText: 'Preço por metro linear (R\$)',
                       prefixIcon: Icon(Icons.attach_money_outlined),
                     ),
                   ),
@@ -643,22 +668,31 @@ Future<void> showFabricFormSheet(
                     ),
                   ],
                   const SizedBox(height: 16),
+                  FormError(formError),
                   FilledButton(
                     onPressed: () {
+                      final FormReader reader = FormReader();
                       final FabricStock fabric = FabricStock(
                         id: initial?.id ?? newId(),
                         name: nameCtrl.text.trim(),
                         storeName: storeCtrl.text.trim(),
-                        widthMeters: parseDouble(widthCtrl.text),
-                        stockLengthMeters: parseDouble(stockCtrl.text),
-                        pricePerMeter: parseDouble(priceCtrl.text),
+                        widthMeters: initial != null &&
+                                widthCtrl.text ==
+                                    formatNumber(initial.widthMeters * 100)
+                            ? initial.widthMeters
+                            : reader.centimeters(
+                                'Largura (cm)', widthCtrl.text),
+                        stockLengthMeters: read(reader, 'Estoque (m)',
+                            stockCtrl, initial?.stockLengthMeters),
+                        pricePerMeter: read(reader, 'Preço por metro linear',
+                            priceCtrl, initial?.pricePerMeter,
+                            thousands: true),
                         createdAtIso: initial?.createdAtIso ??
                             DateTime.now().toIso8601String(),
                       );
-                      final String? error = fabric.validate();
+                      final String? error = reader.error ?? fabric.validate();
                       if (error != null) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(error)));
+                        setS(() => formError = error);
                         return;
                       }
                       onSaveFabric(fabric,
@@ -666,15 +700,16 @@ Future<void> showFabricFormSheet(
                       Navigator.pop(ctx);
                     },
                     child: Text(
-                        isEdit ? 'Salvar alteracoes' : 'Salvar tecido'),
+                        isEdit ? 'Salvar alterações' : 'Salvar tecido'),
                   ),
                   if (isEdit) ...<Widget>[
                     const SizedBox(height: 10),
                     OutlinedButton.icon(
                       onPressed: () async {
-                        final double? v = await _promptAddStock(context);
-                        if (v != null && v > 0) {
-                          onAddStock(initial.id, v);
+                        final ({double meters, double price})? added =
+                            await _promptAddStock(context, initial);
+                        if (added != null) {
+                          onAddStock(initial.id, added.meters, added.price);
                           if (ctx.mounted) Navigator.pop(ctx);
                         }
                       },
@@ -687,9 +722,12 @@ Future<void> showFabricFormSheet(
                         foregroundColor: const Color(0xFFEF4444),
                         side: const BorderSide(color: Color(0xFFFCA5A5)),
                       ),
-                      onPressed: () {
+                      onPressed: () async {
+                        final bool ok =
+                            await _confirmDeleteFabric(ctx, initial.name);
+                        if (!ok) return;
                         onDeleteFabric(initial.id);
-                        Navigator.pop(ctx);
+                        if (ctx.mounted) Navigator.pop(ctx);
                       },
                       icon: const Icon(Icons.delete_outline),
                       label: const Text('Excluir tecido'),
@@ -705,40 +743,101 @@ Future<void> showFabricFormSheet(
   );
 }
 
-Future<double?> _promptAddStock(BuildContext context) async {
-  final TextEditingController ctrl = TextEditingController();
-  return showDialog<double>(
+Future<bool> _confirmDeleteFabric(BuildContext context, String name) async {
+  final bool? ok = await showDialog<bool>(
     context: context,
     builder: (BuildContext ctx) => AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      title: const Text('Adicionar metragem'),
-      content: TextField(
-        controller: ctrl,
-        autofocus: true,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        decoration: const InputDecoration(
-          labelText: 'Metros a adicionar',
-          prefixIcon: Icon(Icons.add),
-          suffixText: 'm',
-        ),
-      ),
+      icon: const Icon(Icons.delete_outline_rounded,
+          color: Color(0xFFEF4444), size: 36),
+      title: const Text('Excluir tecido'),
+      content: Text('Deseja excluir "$name"?\nIsso não pode ser desfeito.'),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.pop(ctx),
           child: const Text('Cancelar'),
         ),
         FilledButton(
-          onPressed: () {
-            final double v = parseDouble(ctrl.text);
-            if (v <= 0) return;
-            Navigator.pop(ctx, v);
-          },
-          child: const Text('Adicionar'),
+          style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444)),
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Excluir'),
         ),
       ],
     ),
   );
+  return ok ?? false;
 }
 
-// Alias publico para manter compatibilidade
-Future<double?> promptAddStock(BuildContext context) => _promptAddStock(context);
+Future<({double meters, double price})?> _promptAddStock(
+    BuildContext context, FabricStock fabric) async {
+  final TextEditingController ctrl = TextEditingController();
+  final TextEditingController priceCtrl =
+      TextEditingController(text: formatNumber(fabric.pricePerMeter));
+  String? formError;
+  return showDialog<({double meters, double price})>(
+    context: context,
+    builder: (_) => StatefulBuilder(
+      builder: (BuildContext ctx, StateSetter setS) => AlertDialog(
+        scrollable: true,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Adicionar metragem'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Metros a adicionar',
+                prefixIcon: Icon(Icons.add),
+                suffixText: 'm',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: priceCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Preço do metro nesta compra (R\$)',
+                helperText: 'Se mudou, as próximas peças usam o novo preço',
+                helperMaxLines: 2,
+              ),
+            ),
+            const SizedBox(height: 12),
+            FormError(formError),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final FormReader reader = FormReader();
+              final double v = reader.number('Metros a adicionar', ctrl.text);
+              final double price =
+                  priceCtrl.text == formatNumber(fabric.pricePerMeter)
+                      ? fabric.pricePerMeter
+                      : reader.number('Preço do metro', priceCtrl.text,
+                          thousands: true);
+              final String? error = reader.error ??
+                  (v <= 0 ? 'Informe uma metragem maior que zero.' : null) ??
+                  (price < 0 ? 'O preço não pode ser negativo.' : null);
+              if (error != null) {
+                setS(() => formError = error);
+                return;
+              }
+              Navigator.pop(ctx, (meters: v, price: price));
+            },
+            child: const Text('Adicionar'),
+          ),
+        ],
+      ),
+    ),
+  );
+}

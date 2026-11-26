@@ -46,11 +46,14 @@ class FabricStock {
     if (widthMeters <= 0) {
       return 'A largura do tecido deve ser maior que zero.';
     }
+    if (widthMeters < 0.2) {
+      return 'Largura muito pequena. Digite em centímetros (ex: 140).';
+    }
     if (stockLengthMeters < 0) {
-      return 'O estoque nao pode ser negativo.';
+      return 'O estoque não pode ser negativo.';
     }
     if (pricePerMeter < 0) {
-      return 'O preco por metro nao pode ser negativo.';
+      return 'O preço por metro não pode ser negativo.';
     }
     return null;
   }

@@ -17,12 +17,22 @@ class SettingsTab extends StatefulWidget {
     required this.config,
     required this.currency,
     required this.onSaveConfig,
+    required this.lastBackup,
+    required this.hasSafetyCopy,
+    required this.onExportBackup,
+    required this.onImportBackup,
+    required this.onUndoRestore,
     super.key,
   });
 
   final BusinessConfig config;
   final NumberFormat currency;
   final void Function(BusinessConfig config) onSaveConfig;
+  final DateTime? lastBackup;
+  final bool hasSafetyCopy;
+  final Future<void> Function() onExportBackup;
+  final Future<void> Function() onImportBackup;
+  final Future<void> Function() onUndoRestore;
 
   @override
   State<SettingsTab> createState() => _SettingsTabState();
@@ -38,16 +48,16 @@ class _SettingsTabState extends State<SettingsTab> {
   void initState() {
     super.initState();
     _salaryController = TextEditingController(
-      text: widget.config.desiredMonthlySalary.toString(),
+      text: formatNumber(widget.config.desiredMonthlySalary),
     );
     _hoursController = TextEditingController(
-      text: widget.config.monthlyWorkHours.toString(),
+      text: formatNumber(widget.config.monthlyWorkHours),
     );
     _fixedController = TextEditingController(
-      text: widget.config.fixedCostPercent.toString(),
+      text: formatNumber(widget.config.fixedCostPercent),
     );
     _profitController = TextEditingController(
-      text: widget.config.profitPercent.toString(),
+      text: formatNumber(widget.config.profitPercent),
     );
   }
 
@@ -55,10 +65,10 @@ class _SettingsTabState extends State<SettingsTab> {
   void didUpdateWidget(covariant SettingsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.config != widget.config) {
-      _salaryController.text = widget.config.desiredMonthlySalary.toString();
-      _hoursController.text = widget.config.monthlyWorkHours.toString();
-      _fixedController.text = widget.config.fixedCostPercent.toString();
-      _profitController.text = widget.config.profitPercent.toString();
+      _salaryController.text = formatNumber(widget.config.desiredMonthlySalary);
+      _hoursController.text = formatNumber(widget.config.monthlyWorkHours);
+      _fixedController.text = formatNumber(widget.config.fixedCostPercent);
+      _profitController.text = formatNumber(widget.config.profitPercent);
     }
   }
 
@@ -71,13 +81,44 @@ class _SettingsTabState extends State<SettingsTab> {
     super.dispose();
   }
 
+  BusinessConfig _readConfig(FormReader reader) => BusinessConfig(
+        desiredMonthlySalary: reader.number(
+            'Salário mensal desejado', _salaryController.text,
+            thousands: true),
+        monthlyWorkHours:
+            reader.number('Horas de trabalho por mês', _hoursController.text),
+        fixedCostPercent:
+            reader.number('Custos fixos (%)', _fixedController.text),
+        profitPercent: reader.number('Lucro (%)', _profitController.text),
+      );
+
+  bool _busy = false;
+
+  /// Evita toque duplo enquanto o backup está em andamento.
+  Future<void> _run(Future<void> Function() action) async {
+    setState(() => _busy = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  static String _formatDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/'
+      '${d.month.toString().padLeft(2, '0')}/${d.year}';
+
   void _save() {
-    final BusinessConfig updated = BusinessConfig(
-      desiredMonthlySalary: parseDouble(_salaryController.text),
-      monthlyWorkHours: parseDouble(_hoursController.text),
-      fixedCostPercent: parseDouble(_fixedController.text),
-      profitPercent: parseDouble(_profitController.text),
-    );
+    final FormReader reader = FormReader();
+    final BusinessConfig updated = _readConfig(reader);
+    final String? error = reader.error ?? updated.validate();
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(error), backgroundColor: const Color(0xFFB91C1C)),
+      );
+      return;
+    }
     widget.onSaveConfig(updated);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -85,7 +126,7 @@ class _SettingsTabState extends State<SettingsTab> {
           children: <Widget>[
             Icon(Icons.check_circle_outline, color: Colors.white),
             SizedBox(width: 8),
-            Text('Configuracoes salvas!'),
+            Text('Configurações salvas!'),
           ],
         ),
         backgroundColor: _kPrimary,
@@ -98,8 +139,12 @@ class _SettingsTabState extends State<SettingsTab> {
 
   @override
   Widget build(BuildContext context) {
+    // Simula com o que esta digitado; se for inválido, usa o que esta salvo.
+    final FormReader reader = FormReader();
+    final BusinessConfig typed = _readConfig(reader);
+    final bool typedOk = reader.error == null && typed.validate() == null;
     final PricingBreakdown sample = calculatePricing(
-      config: widget.config,
+      config: typedOk ? typed : widget.config,
       laborHours: 3,
       materialsCost: 75,
     );
@@ -111,15 +156,15 @@ class _SettingsTabState extends State<SettingsTab> {
         const _GradientCard(
           gradient: <Color>[Color(0xFF1E3A8A), Color(0xFF2563EB)],
           icon: Icons.tune_rounded,
-          title: 'Configuracoes do Negocio',
+          title: 'Configurações do Negócio',
           subtitle:
-              'Defina sua remuneracao, horas trabalhadas e margens para que o app calcule o preco ideal de cada peca.',
+              'Defina sua remuneração, horas trabalhadas e margens para que o app calcule o preço ideal de cada peça.',
         ),
         const SizedBox(height: 20),
 
-        // ── Remuneracao ───────────────────────────────────────────────────────
+        // ── Remuneração ───────────────────────────────────────────────────────
         const _SectionBar(
-            label: 'Remuneracao',
+            label: 'Remuneração',
             icon: Icons.payments_outlined,
             color: _kPrimary),
         const SizedBox(height: 10),
@@ -131,7 +176,7 @@ class _SettingsTabState extends State<SettingsTab> {
                   const TextInputType.numberWithOptions(decimal: true),
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
-                labelText: 'Salario mensal desejado (R\$)',
+                labelText: 'Salário mensal desejado (R\$)',
                 prefixIcon: Icon(Icons.attach_money_outlined),
               ),
             ),
@@ -142,7 +187,7 @@ class _SettingsTabState extends State<SettingsTab> {
                   const TextInputType.numberWithOptions(decimal: true),
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
-                labelText: 'Horas de trabalho por mes',
+                labelText: 'Horas de trabalho por mês',
                 helperText: 'Ex: 220 horas (8h/dia x 27,5 dias)',
                 prefixIcon: Icon(Icons.access_time_outlined),
               ),
@@ -156,7 +201,7 @@ class _SettingsTabState extends State<SettingsTab> {
           _InfoPill(
             icon: Icons.bolt_rounded,
             label:
-                'Valor da hora: ${widget.currency.format(parseDouble(_salaryController.text) / parseDouble(_hoursController.text))}',
+                'Valor da hora: ${widget.currency.format(parseDouble(_salaryController.text, thousands: true) / parseDouble(_hoursController.text))}',
             color: _kPrimary,
           ),
         ],
@@ -208,7 +253,7 @@ class _SettingsTabState extends State<SettingsTab> {
         const _InfoPill(
           icon: Icons.info_outline_rounded,
           label:
-              'Margem: o lucro e calculado sobre o preco de venda, nao sobre o custo.',
+              'Margem: o lucro é calculado sobre o preço de venda, não sobre o custo.',
           color: _kAccent,
         ),
         const SizedBox(height: 20),
@@ -217,12 +262,58 @@ class _SettingsTabState extends State<SettingsTab> {
         FilledButton.icon(
           onPressed: _save,
           icon: const Icon(Icons.save_rounded),
-          label: const Text('Salvar configuracoes'),
+          label: const Text('Salvar configurações'),
         ),
         const SizedBox(height: 28),
 
-        // ── Simulacao ─────────────────────────────────────────────────────────
+        // ── Simulação ─────────────────────────────────────────────────────────
         _SimulationCard(sample: sample, currency: widget.currency),
+        const SizedBox(height: 28),
+
+        // ── Backup ────────────────────────────────────────────────────────────
+        const _SectionBar(
+            label: 'Backup', icon: Icons.backup_outlined, color: _kPrimary),
+        const SizedBox(height: 10),
+        _GroupBox(
+          children: <Widget>[
+            Text(
+              widget.lastBackup == null
+                  ? 'Nenhum backup feito ainda.'
+                  : 'Último backup: ${_formatDate(widget.lastBackup!)}',
+              style: TextStyle(
+                fontWeight: FontWeight.w700,
+                color: widget.lastBackup == null
+                    ? const Color(0xFFB91C1C)
+                    : _kTextDark,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Guarda tecidos, linhas, peças, vendas, fotos e configurações '
+              'num arquivo. Envie para o seu WhatsApp ou Google Drive. Se '
+              'trocar de celular, instale o app e use "Restaurar backup".',
+              style: TextStyle(fontSize: 12, color: _kTextMid, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _busy ? null : () => _run(widget.onExportBackup),
+              icon: const Icon(Icons.upload_file_rounded),
+              label: const Text('Fazer backup agora'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : () => _run(widget.onImportBackup),
+              icon: const Icon(Icons.restore_rounded),
+              label: const Text('Restaurar backup'),
+            ),
+            if (widget.hasSafetyCopy)
+              TextButton.icon(
+                onPressed: _busy ? null : () => _run(widget.onUndoRestore),
+                icon: const Icon(Icons.undo_rounded, size: 18),
+                label: const Text('Desfazer a última restauração'),
+              ),
+          ],
+        ),
         const SizedBox(height: 28),
 
         // ── Rodape ────────────────────────────────────────────────────────────
@@ -312,12 +403,12 @@ class _GradientCard extends StatelessWidget {
                     child: Icon(icon, color: Colors.white, size: 20),
                   ),
                   const SizedBox(width: 12),
-                  Text(title,
+                  Expanded(child: Text(title,
                       style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,
                           fontSize: 16,
-                          letterSpacing: -0.2)),
+                          letterSpacing: -0.2))),
                 ],
               ),
             ),
@@ -473,7 +564,7 @@ class _SimulationCard extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        Text('Simulacao',
+                        Text('Simulação',
                             style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w800,
@@ -496,20 +587,20 @@ class _SimulationCard extends StatelessWidget {
                       label: 'Valor da hora',
                       value: currency.format(sample.hourlyValue)),
                   _SimRow(
-                      label: 'Custo de trabalho',
+                      label: 'Seu trabalho',
                       value: currency.format(sample.laborCost)),
                   _SimRow(
-                      label: 'Custo operacional',
+                      label: 'Trabalho + custos fixos',
                       value: currency.format(sample.operationalCost)),
                   _SimRow(
-                      label: 'Custo de producao',
+                      label: 'Custo da peça',
                       value: currency.format(sample.productionCost)),
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 8),
                     child: Divider(height: 1),
                   ),
                   _SimRow(
-                    label: 'Preco final sugerido',
+                    label: 'Preço final sugerido',
                     value: currency.format(sample.suggestedPrice),
                     bold: true,
                     color: const Color(0xFF059669),

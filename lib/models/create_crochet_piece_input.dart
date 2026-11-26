@@ -1,3 +1,4 @@
+import 'piece_form_mode.dart';
 import 'yarn_usage.dart';
 
 class CreateCrochetPieceInput {
@@ -6,6 +7,8 @@ class CreateCrochetPieceInput {
     required this.yarnUsages,
     required this.otherMaterialsCost,
     required this.laborHours,
+    this.quantity = 1,
+    this.photoName,
   });
 
   final String pieceName;
@@ -13,9 +16,15 @@ class CreateCrochetPieceInput {
   final double otherMaterialsCost;
   final double laborHours;
 
-  String? validate() {
+  /// Quantas peças iguais registrar; os demais campos são de UMA peça.
+  final double quantity;
+  final String? photoName;
+
+  String? validate({bool requireMaterials = true}) {
     if (pieceName.trim().isEmpty) return 'Informe o nome da peça.';
-    if (yarnUsages.isEmpty) return 'Adicione ao menos uma linha à peça.';
+    final String? quantityError = validateQuantity(quantity);
+    if (quantityError != null) return quantityError;
+    if (requireMaterials && yarnUsages.isEmpty) return 'Adicione ao menos uma linha à peça.';
     for (final YarnUsage u in yarnUsages) {
       if (u.usedWeightGrams <= 0) {
         return 'Informe a quantidade em gramas da linha "${u.yarnName}".';
