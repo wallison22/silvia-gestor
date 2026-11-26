@@ -4,4 +4,5 @@ class StorageKeys {
   static const String yarns = 'yarns';
   static const String crochetPieces = 'crochet_pieces';
   static const String config = 'config';
+  static const String lastBackup = 'last_backup';
 }

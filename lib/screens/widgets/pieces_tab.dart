@@ -7,8 +7,14 @@ import '../../models/create_piece_input.dart';
 import '../../models/fabric_stock.dart';
 import '../../models/fabric_usage.dart';
 import '../../models/piece_record.dart';
+import '../../models/piece_form_mode.dart';
 import '../../models/pricing_breakdown.dart';
 import '../../services/pricing_service.dart';
+import '../../services/quote_service.dart';
+import 'form_error.dart';
+import 'photo_field.dart';
+import 'sale_dialog.dart';
+import 'search_section.dart';
 
 // Cores compartilhadas
 const Color _kPrimary = Color(0xFF1E40AF);
@@ -25,7 +31,9 @@ class PiecesTab extends StatelessWidget {
     required this.config,
     required this.currency,
     required this.onCreatePiece,
+    required this.onUpdatePiece,
     required this.onDeletePiece,
+    required this.onSetSale,
     super.key,
   });
 
@@ -33,13 +41,42 @@ class PiecesTab extends StatelessWidget {
   final List<FabricStock> fabrics;
   final BusinessConfig config;
   final NumberFormat currency;
-  final void Function(CreatePieceInput input) onCreatePiece;
+  final String? Function(CreatePieceInput input) onCreatePiece;
+  final String? Function(String id, CreatePieceInput input) onUpdatePiece;
   final void Function(String id) onDeletePiece;
+  final void Function(String id, double? price) onSetSale;
+
+  void _openForm(BuildContext context, PieceFormMode mode,
+      [PieceRecord? piece]) {
+    List<FabricStock> available = fabrics;
+    if (mode == PieceFormMode.edit) {
+      // O material da propria peça volta a contar como disponível.
+      available = fabrics.map((FabricStock s) {
+        final double back = piece!.fabricUsages
+            .where((u) => u.fabricId == s.id)
+            .fold(0, (double t, u) => t + u.equivalentLengthUsedMeters);
+        return s.copyWith(stockLengthMeters: s.stockLengthMeters + back);
+      }).toList();
+    }
+    showPieceFormSheet(
+      context,
+      fabrics: available,
+      config: config,
+      currency: currency,
+      mode: mode,
+      initial: piece,
+      onSave: mode == PieceFormMode.edit
+          ? (input) => onUpdatePiece(piece!.id, input)
+          : onCreatePiece,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final double totalRevenue =
-        pieces.fold(0, (double s, PieceRecord p) => s + p.suggestedPrice);
+        pieces.fold(0, (double s, PieceRecord p) => s + (p.isSold ? 0 : p.suggestedPrice));
+    final double totalSold = pieces.fold(
+        0, (double s, PieceRecord p) => s + (p.soldPrice ?? 0));
     final double totalCost =
         pieces.fold(0, (double s, PieceRecord p) => s + p.productionCost);
 
@@ -49,13 +86,13 @@ class PiecesTab extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
           children: <Widget>[
             _DashboardCard(
-              title: 'Pecas Registradas',
+              title: 'Peças Registradas',
               icon: Icons.content_cut_rounded,
               gradient: const <Color>[Color(0xFF1E3A8A), Color(0xFF2563EB)],
               stats: <_StatData>[
                 _StatData(
                   icon: Icons.layers_rounded,
-                  label: 'Pecas',
+                  label: 'Peças',
                   value: '${pieces.length}',
                   color: _kPrimary,
                 ),
@@ -67,27 +104,53 @@ class PiecesTab extends StatelessWidget {
                 ),
                 _StatData(
                   icon: Icons.trending_up_rounded,
-                  label: 'Receita',
+                  label: 'A vender',
                   value: currency.format(totalRevenue),
+                  color: const Color(0xFFF59E0B),
+                ),
+                _StatData(
+                  icon: Icons.sell_rounded,
+                  label: 'Vendido',
+                  value: currency.format(totalSold),
                   color: const Color(0xFF059669),
                 ),
               ],
             ),
             const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () => _openForm(context, PieceFormMode.quote),
+              icon: const Icon(Icons.calculate_outlined),
+              label: const Text('Fazer orçamento'),
+            ),
+            const SizedBox(height: 16),
             if (pieces.isEmpty)
               const _EmptyState(
                 icon: Icons.content_cut_outlined,
-                title: 'Nenhuma peca ainda',
-                subtitle: 'Toque em + para registrar sua primeira peca.',
+                title: 'Nenhuma peça ainda',
+                subtitle: 'Toque em + para registrar sua primeira peça.',
               )
             else
-              ...pieces.map((PieceRecord p) => _PieceCard(
-                    piece: p,
-                    currency: currency,
-                    onTap: () => _showPieceDetails(context, p, currency),
-                    onDelete: () =>
-                        _confirmDelete(context, p, onDeletePiece),
-                  )),
+              SearchSection<PieceRecord>(
+                items: pieces.reversed.toList(),
+                textOf: (PieceRecord p) => '${p.pieceName} ${p.fabricsDescription}',
+                isSold: (PieceRecord p) => p.isSold,
+                itemBuilder: (PieceRecord p) => _PieceCard(
+                  piece: p,
+                  currency: currency,
+                  onTap: () => _showPieceDetails(
+                    context,
+                    p,
+                    currency,
+                    onEdit: () => _openForm(context, PieceFormMode.edit, p),
+                    onDuplicate: fabrics.isEmpty
+                        ? null
+                        : () =>
+                            _openForm(context, PieceFormMode.duplicate, p),
+                  ),
+                  onDelete: () => _confirmDelete(context, p, onDeletePiece),
+                  onSale: () => _handleSale(context, p, currency, onSetSale),
+                ),
+              ),
           ],
         ),
         Positioned(
@@ -96,15 +159,9 @@ class PiecesTab extends StatelessWidget {
           child: FloatingActionButton.extended(
             onPressed: fabrics.isEmpty
                 ? null
-                : () => showPieceFormSheet(
-                      context,
-                      fabrics: fabrics,
-                      config: config,
-                      currency: currency,
-                      onSave: onCreatePiece,
-                    ),
+                : () => _openForm(context, PieceFormMode.create),
             icon: const Icon(Icons.add_rounded),
-            label: const Text('Registrar peca'),
+            label: const Text('Registrar peça'),
           ),
         ),
       ],
@@ -177,12 +234,12 @@ class _DashboardCard extends StatelessWidget {
                     child: Icon(icon, color: Colors.white, size: 20),
                   ),
                   const SizedBox(width: 12),
-                  Text(title,
+                  Expanded(child: Text(title,
                       style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,
                           fontSize: 16,
-                          letterSpacing: -0.2)),
+                          letterSpacing: -0.2))),
                 ],
               ),
             ),
@@ -192,7 +249,9 @@ class _DashboardCard extends StatelessWidget {
                   const EdgeInsets.symmetric(vertical: 18, horizontal: 8),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: stats.map((s) => _StatTile(data: s)).toList(),
+                children: stats
+                    .map((s) => Expanded(child: _StatTile(data: s)))
+                    .toList(),
               ),
             ),
           ],
@@ -220,12 +279,18 @@ class _StatTile extends StatelessWidget {
           child: Icon(data.icon, color: data.color, size: 22),
         ),
         const SizedBox(height: 8),
-        Text(data.value,
-            style: const TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 14,
-                color: _kTextDark,
-                letterSpacing: -0.3)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(data.value,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                    color: _kTextDark,
+                    letterSpacing: -0.3)),
+          ),
+        ),
         const SizedBox(height: 2),
         Text(data.label,
             style:
@@ -277,7 +342,7 @@ class _EmptyState extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Card de peca
+// Card de peça
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _PieceCard extends StatelessWidget {
@@ -286,11 +351,13 @@ class _PieceCard extends StatelessWidget {
     required this.currency,
     required this.onTap,
     required this.onDelete,
+    required this.onSale,
   });
   final PieceRecord piece;
   final NumberFormat currency;
   final VoidCallback onTap;
   final VoidCallback onDelete;
+  final VoidCallback onSale;
 
   @override
   Widget build(BuildContext context) {
@@ -328,12 +395,14 @@ class _PieceCard extends StatelessWidget {
                     padding: const EdgeInsets.all(14),
                     child: Row(
                       children: <Widget>[
+                        if (piece.photoName != null)
+                          PieceThumb(piece.photoName, width: 48)
+                        else
                         Container(
                           width: 48,
                           height: 48,
                           decoration: BoxDecoration(
-                            color:
-                                _kPrimary.withValues(alpha: 0.1),
+                            color: _kPrimary.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(13),
                           ),
                           child: const Icon(Icons.content_cut_rounded,
@@ -359,7 +428,9 @@ class _PieceCard extends StatelessWidget {
                                     overflow: TextOverflow.ellipsis),
                               ],
                               const SizedBox(height: 10),
-                              Row(
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 6,
                                 children: <Widget>[
                                   _PriceBadge(
                                     label: 'Custo',
@@ -367,24 +438,46 @@ class _PieceCard extends StatelessWidget {
                                         currency.format(piece.productionCost),
                                     color: const Color(0xFF7C3AED),
                                   ),
-                                  const SizedBox(width: 8),
                                   _PriceBadge(
-                                    label: 'Preco',
+                                    label: 'Preço',
                                     value: currency
                                         .format(piece.suggestedPrice),
                                     color: const Color(0xFF059669),
                                   ),
+                                  if (piece.isSold)
+                                    _PriceBadge(
+                                      label: 'Vendida por',
+                                      value: currency.format(piece.soldPrice),
+                                      color: _kPrimary,
+                                    ),
                                 ],
                               ),
                             ],
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded,
-                              size: 20),
-                          color: const Color(0xFFFCA5A5),
-                          onPressed: onDelete,
-                          tooltip: 'Excluir',
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: <Widget>[
+                            IconButton(
+                              icon: Icon(
+                                  piece.isSold
+                                      ? Icons.undo_rounded
+                                      : Icons.sell_outlined,
+                                  size: 20),
+                              color: const Color(0xFF059669),
+                              onPressed: onSale,
+                              tooltip: piece.isSold
+                                  ? 'Desfazer venda'
+                                  : 'Marcar como vendida',
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline_rounded,
+                                  size: 20),
+                              color: const Color(0xFFFCA5A5),
+                              onPressed: onDelete,
+                              tooltip: 'Excluir',
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -435,7 +528,7 @@ class _PriceBadge extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Formulario de registro de peca
+// Formulario de registro de peça
 // ─────────────────────────────────────────────────────────────────────────────
 
 Future<void> showPieceFormSheet(
@@ -443,11 +536,14 @@ Future<void> showPieceFormSheet(
   required List<FabricStock> fabrics,
   required BusinessConfig config,
   required NumberFormat currency,
-  required void Function(CreatePieceInput input) onSave,
+  required String? Function(CreatePieceInput input) onSave,
+  PieceFormMode mode = PieceFormMode.create,
+  PieceRecord? initial,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -457,15 +553,17 @@ Future<void> showPieceFormSheet(
       config: config,
       currency: currency,
       onSave: onSave,
+      mode: mode,
+      initial: initial,
     ),
   );
 }
 
 class _FabricRow {
-  _FabricRow(String id)
+  _FabricRow(String id, {String width = '', String length = ''})
       : fabricId = id,
-        widthCtrl = TextEditingController(),
-        lengthCtrl = TextEditingController();
+        widthCtrl = TextEditingController(text: width),
+        lengthCtrl = TextEditingController(text: length);
   String fabricId;
   final TextEditingController widthCtrl;
   final TextEditingController lengthCtrl;
@@ -481,11 +579,17 @@ class _PieceFormSheet extends StatefulWidget {
     required this.config,
     required this.currency,
     required this.onSave,
+    required this.mode,
+    this.initial,
   });
   final List<FabricStock> fabrics;
   final BusinessConfig config;
   final NumberFormat currency;
-  final void Function(CreatePieceInput) onSave;
+  final String? Function(CreatePieceInput) onSave;
+  final PieceFormMode mode;
+
+  /// Peça a editar ou duplicar.
+  final PieceRecord? initial;
 
   @override
   State<_PieceFormSheet> createState() => _PieceFormSheetState();
@@ -496,43 +600,125 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
   final TextEditingController _extraCtrl =
       TextEditingController(text: '0');
   final TextEditingController _laborCtrl = TextEditingController();
+  final TextEditingController _quantityCtrl =
+      TextEditingController(text: '1');
   late final List<_FabricRow> _rows;
+  String? _photoName;
+  String? _error;
+
+  bool get _isQuote => widget.mode == PieceFormMode.quote;
+  bool get _isEdit => widget.mode == PieceFormMode.edit;
 
   @override
   void initState() {
     super.initState();
-    _rows = <_FabricRow>[_FabricRow(widget.fabrics.first.id)];
+    _rows = <_FabricRow>[];
+    final PieceRecord? initial = widget.initial;
+    if (initial != null) {
+      _nameCtrl.text = initial.pieceName;
+      _extraCtrl.text = formatNumber(initial.additionalMaterialsCost);
+      _laborCtrl.text = formatNumber(initial.laborHours);
+      _photoName = initial.photoName;
+      for (final FabricUsage u in initial.fabricUsages) {
+        if (!widget.fabrics.any((FabricStock f) => f.id == u.fabricId)) {
+          continue;
+        }
+        _rows.add(_FabricRow(
+          u.fabricId,
+          width: formatNumber(u.usedWidthMeters * 100),
+          length: formatNumber(u.usedLengthMeters * 100),
+        ));
+      }
+    }
+    if (_rows.isEmpty && widget.fabrics.isNotEmpty) {
+      _rows.add(_FabricRow(widget.fabrics.first.id));
+    }
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _quantityCtrl.dispose();
     _extraCtrl.dispose();
     _laborCtrl.dispose();
     for (final _FabricRow r in _rows) { r.dispose(); }
     super.dispose();
   }
 
-  List<FabricUsage> _buildUsages() => _rows.map((_FabricRow row) {
-        final FabricStock f = widget.fabrics
-            .firstWhere((FabricStock x) => x.id == row.fabricId);
-        return FabricUsage(
-          fabricId: f.id,
-          fabricName: f.name,
-          fabricWidthMeters: f.widthMeters,
-          fabricPricePerMeter: f.pricePerMeter,
-          usedWidthMeters: parseDouble(row.widthCtrl.text),
-          usedLengthMeters: parseDouble(row.lengthCtrl.text),
-        );
-      }).toList();
+  /// Uso do tecido na linha. Ao editar, mantem o preço e a largura que a peça
+  /// já tinha para aquele tecido.
+  FabricUsage _usageOf(_FabricRow row, FormReader reader) {
+    final FabricStock f =
+        widget.fabrics.firstWhere((FabricStock x) => x.id == row.fabricId);
+    FabricUsage? original;
+    if (_isEdit) {
+      for (final FabricUsage u in widget.initial!.fabricUsages) {
+        if (u.fabricId == f.id) original = u;
+      }
+    }
+    return FabricUsage(
+      fabricId: f.id,
+      fabricName: f.name,
+      fabricWidthMeters: original?.fabricWidthMeters ?? f.widthMeters,
+      fabricPricePerMeter: original?.fabricPricePerMeter ?? f.pricePerMeter,
+      usedWidthMeters: reader.centimeters('Largura', row.widthCtrl.text),
+      usedLengthMeters: reader.centimeters('Comprimento', row.lengthCtrl.text),
+    );
+  }
+
+  List<FabricUsage> _buildUsages(FormReader reader) =>
+      _rows.map((_FabricRow r) => _usageOf(r, reader)).toList();
+
+  CreatePieceInput _readInput(FormReader reader) => CreatePieceInput(
+        pieceName: _nameCtrl.text.trim(),
+        fabricUsages: _buildUsages(reader),
+        additionalMaterialsCost: reader.number(
+            'Aviamentos e materiais', _extraCtrl.text,
+            thousands: true, emptyAsZero: true),
+        laborHours: reader.hours('Tempo gasto (horas)', _laborCtrl.text),
+        quantity:
+            _isEdit ? 1 : reader.number('Quantidade', _quantityCtrl.text),
+        photoName: _photoName,
+      );
+
+  Future<void> _shareQuote() async {
+    final FormReader reader = FormReader();
+    final CreatePieceInput input = _readInput(reader);
+    final String? err = reader.error ??
+        input.validate(requireMaterials: false) ??
+        widget.config.validate();
+    setState(() => _error = err);
+    if (err != null) return;
+    final double materials =
+        input.fabricUsages.fold(0, (double s, u) => s + u.fabricCost);
+    final PricingBreakdown pricing = calculatePricing(
+      config: widget.config,
+      laborHours: input.laborHours,
+      materialsCost: materials + input.additionalMaterialsCost,
+    );
+    try {
+      await shareText(buildQuoteText(
+        pieceName: input.pieceName,
+        unitPrice: pricing.suggestedPrice,
+        quantity: input.quantity.round(),
+        currency: widget.currency,
+      ));
+    } catch (e) {
+      debugPrint('Falha ao compartilhar: $e');
+      if (mounted) {
+        setState(() => _error = 'Não foi possível abrir o compartilhamento.');
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final List<FabricUsage> usages = _buildUsages();
+    final List<FabricUsage> usages = _buildUsages(FormReader());
+    final double quantity = parseDouble(_quantityCtrl.text);
     final double totalFabric =
         usages.fold(0, (double s, FabricUsage u) => s + u.fabricCost);
-    final double extra = parseDouble(_extraCtrl.text);
-    final double hours = parseDouble(_laborCtrl.text);
+    final double extra = parseDouble(_extraCtrl.text, thousands: true);
+    final double hours = tryParseHours(_laborCtrl.text) ?? 0;
     final PricingBreakdown preview = calculatePricing(
       config: widget.config,
       laborHours: hours,
@@ -569,7 +755,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                       color: _kPrimary, size: 20),
                 ),
                 const SizedBox(width: 12),
-                Text('Registrar Peca',
+                Text(widget.mode.title,
                     style: Theme.of(context).textTheme.titleMedium),
               ],
             ),
@@ -578,27 +764,25 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
               controller: _nameCtrl,
               textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(
-                labelText: 'Nome da peca',
+                labelText: 'Nome da peça',
                 prefixIcon: Icon(Icons.label_outline),
               ),
             ),
             const SizedBox(height: 20),
+            PhotoField(
+              photoName: _photoName,
+              onChanged: (String? v) => setState(() => _photoName = v),
+            ),
+            const SizedBox(height: 16),
             const _FormSection(label: 'Tecidos utilizados', color: _kPrimary),
             const SizedBox(height: 10),
             ..._rows.asMap().entries.map((MapEntry<int, _FabricRow> e) {
               final int i = e.key;
               final _FabricRow row = e.value;
-              final FabricStock fabric = widget.fabrics
-                  .firstWhere((FabricStock f) => f.id == row.fabricId);
-              final FabricUsage usage = FabricUsage(
-                fabricId: fabric.id,
-                fabricName: fabric.name,
-                fabricWidthMeters: fabric.widthMeters,
-                fabricPricePerMeter: fabric.pricePerMeter,
-                usedWidthMeters: parseDouble(row.widthCtrl.text),
-                usedLengthMeters: parseDouble(row.lengthCtrl.text),
-              );
+              final FabricUsage usage = _usageOf(row, FormReader());
               return Container(
+                // Sem a chave, remover uma linha trocava o item das outras.
+                key: ObjectKey(row),
                 margin: const EdgeInsets.only(bottom: 10),
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
@@ -638,7 +822,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                                     DropdownMenuItem<String>(
                                       value: f.id,
                                       child: Text(
-                                          '${f.name} (${f.stockLengthMeters.toStringAsFixed(2)}m)',
+                                          '${f.name} (${formatFixed(f.stockLengthMeters, 2)}m)',
                                           overflow: TextOverflow.ellipsis),
                                     ))
                                 .toList(),
@@ -649,7 +833,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                             },
                           ),
                         ),
-                        if (_rows.length > 1) ...<Widget>[
+                        if (_rows.length > 1 || _isQuote) ...<Widget>[
                           const SizedBox(width: 8),
                           IconButton(
                             icon: const Icon(
@@ -674,9 +858,9 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                                     decimal: true),
                             onChanged: (_) => setState(() {}),
                             decoration: InputDecoration(
-                              labelText: 'Largura (m)',
+                              labelText: 'Largura (cm)',
                               helperText:
-                                  'Max ${fabric.widthMeters.toStringAsFixed(2)}m',
+                                  'Máx. ${formatNumber(usage.fabricWidthMeters * 100)} cm',
                               filled: true,
                               fillColor: Colors.white,
                               border: OutlineInputBorder(
@@ -699,7 +883,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                                     decimal: true),
                             onChanged: (_) => setState(() {}),
                             decoration: InputDecoration(
-                              labelText: 'Comprimento (m)',
+                              labelText: 'Comprimento (cm)',
                               filled: true,
                               fillColor: Colors.white,
                               border: OutlineInputBorder(
@@ -725,8 +909,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          'Area: ${usage.usedAreaSquareMeters.toStringAsFixed(2)} m²'
-                          '  ·  Consumo: ${usage.equivalentLengthUsedMeters.toStringAsFixed(2)}m'
+                          'Usa ${formatFixed(usage.equivalentLengthUsedMeters, 2)} m do rolo'
                           '  ·  Custo: ${widget.currency.format(usage.fabricCost)}',
                           style: const TextStyle(
                               fontSize: 11,
@@ -740,8 +923,10 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
               );
             }),
             TextButton.icon(
-              onPressed: () => setState(
-                  () => _rows.add(_FabricRow(widget.fabrics.first.id))),
+              onPressed: widget.fabrics.isEmpty
+                  ? null
+                  : () => setState(
+                      () => _rows.add(_FabricRow(widget.fabrics.first.id))),
               icon: const Icon(Icons.add_circle_outline, size: 18),
               label: const Text('Adicionar outro tecido'),
             ),
@@ -761,38 +946,63 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
             const SizedBox(height: 12),
             TextField(
               controller: _laborCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              // O teclado numerico não tem ':' (para digitar 1:30).
+              keyboardType: TextInputType.datetime,
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: 'Tempo gasto (horas)',
-                helperText: 'Ex: 1.5 = 1h 30min',
+                helperText: 'Ex: 1:30 ou 1.5 = 1h 30min',
                 prefixIcon: Icon(Icons.access_time_outlined),
               ),
             ),
             const SizedBox(height: 16),
             _PricingPreviewCard(preview: preview, currency: widget.currency,
                 totalFabric: totalFabric, extra: extra),
+            if (!_isEdit) ...<Widget>[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _quantityCtrl,
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  labelText: 'Quantidade de peças iguais',
+                  helperText: quantity > 1
+                      ? 'Total: ${widget.currency.format(preview.suggestedPrice * quantity)}. '
+                          'Medidas e tempo são de UMA peça.'
+                      : 'Medidas e tempo são de UMA peça.',
+                  helperMaxLines: 2,
+                  prefixIcon: const Icon(Icons.copy_all_outlined),
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
+            FormError(_error),
+            if (_isQuote) ...<Widget>[
+              FilledButton.icon(
+                onPressed: _shareQuote,
+                icon: const Icon(Icons.share_rounded),
+                label: const Text('Enviar orçamento'),
+              ),
+              const SizedBox(height: 10),
+            ],
             FilledButton.icon(
+              style: _isQuote
+                  ? FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF64748B))
+                  : null,
               onPressed: () {
-                final CreatePieceInput input = CreatePieceInput(
-                  pieceName: _nameCtrl.text.trim(),
-                  fabricUsages: _buildUsages(),
-                  additionalMaterialsCost: parseDouble(_extraCtrl.text),
-                  laborHours: parseDouble(_laborCtrl.text),
-                );
-                final String? err = input.validate();
+                final FormReader reader = FormReader();
+                final CreatePieceInput input = _readInput(reader);
+                final String? err =
+                    reader.error ?? input.validate() ?? widget.onSave(input);
                 if (err != null) {
-                  ScaffoldMessenger.of(context)
-                      .showSnackBar(SnackBar(content: Text(err)));
+                  setState(() => _error = err);
                   return;
                 }
-                widget.onSave(input);
                 Navigator.pop(context);
               },
               icon: const Icon(Icons.check_rounded),
-              label: const Text('Salvar peca'),
+              label: Text(_isQuote ? 'Registrar esta peça' : 'Salvar peça'),
             ),
           ],
         ),
@@ -802,7 +1012,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Preview de precificacao
+// Preview de precificação
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _PricingPreviewCard extends StatelessWidget {
@@ -849,7 +1059,7 @@ class _PricingPreviewCard extends StatelessWidget {
                 Icon(Icons.calculate_outlined,
                     color: Colors.white, size: 18),
                 SizedBox(width: 8),
-                Text('Preview de precificacao',
+                Text('Quanto cobrar',
                     style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w700,
@@ -869,15 +1079,15 @@ class _PricingPreviewCard extends StatelessWidget {
                 const Divider(height: 16),
                 _PRow('Valor da hora',
                     currency.format(preview.hourlyValue)),
-                _PRow('Custo de trabalho',
+                _PRow('Seu trabalho',
                     currency.format(preview.laborCost)),
-                _PRow('Custo operacional',
+                _PRow('Trabalho + custos fixos',
                     currency.format(preview.operationalCost)),
-                _PRow('Custo de producao',
+                _PRow('Custo da peça',
                     currency.format(preview.productionCost),
                     bold: true),
                 const Divider(height: 16),
-                _PRow('Preco sugerido',
+                _PRow('Preço sugerido',
                     currency.format(preview.suggestedPrice),
                     bold: true,
                     color: const Color(0xFF059669),
@@ -947,14 +1157,20 @@ class _FormSection extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Detalhes da peca
+// Detalhes da peça
 // ─────────────────────────────────────────────────────────────────────────────
 
 void _showPieceDetails(
-    BuildContext context, PieceRecord piece, NumberFormat currency) {
+  BuildContext context,
+  PieceRecord piece,
+  NumberFormat currency, {
+  required VoidCallback onEdit,
+  required VoidCallback? onDuplicate,
+}) {
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -998,6 +1214,40 @@ void _showPieceDetails(
               ],
             ),
             const SizedBox(height: 20),
+            Row(
+              children: <Widget>[
+                if (!piece.isSold) ...<Widget>[
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        onEdit();
+                      },
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: const Text('Editar'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onDuplicate == null
+                        ? null
+                        : () {
+                            Navigator.pop(ctx);
+                            onDuplicate();
+                          },
+                    icon: const Icon(Icons.copy_rounded, size: 18),
+                    label: const Text('Duplicar'),
+                  ),
+                ),
+              ],
+            ),
+            if (piece.photoName != null) ...<Widget>[
+              const SizedBox(height: 16),
+              PieceThumb(piece.photoName, height: 220),
+            ],
+            const SizedBox(height: 20),
             const _FormSection(label: 'Tecidos usados', color: _kPrimary),
             const SizedBox(height: 10),
             ...piece.fabricUsages.map((FabricUsage u) => Container(
@@ -1017,13 +1267,12 @@ void _showPieceDetails(
                               color: _kTextDark)),
                       const SizedBox(height: 4),
                       Text(
-                        '${u.usedWidthMeters.toStringAsFixed(2)}m × ${u.usedLengthMeters.toStringAsFixed(2)}m'
-                        ' = ${u.usedAreaSquareMeters.toStringAsFixed(2)} m²',
+                        '${formatNumber(u.usedWidthMeters * 100)} × ${formatNumber(u.usedLengthMeters * 100)} cm',
                         style:
                             const TextStyle(fontSize: 12, color: _kTextMid),
                       ),
                       Text(
-                        'Consumo: ${u.equivalentLengthUsedMeters.toStringAsFixed(2)}m  ·  Custo: ${currency.format(u.fabricCost)}',
+                        'Usou ${formatFixed(u.equivalentLengthUsedMeters, 2)} m do rolo  ·  Custo: ${currency.format(u.fabricCost)}',
                         style: const TextStyle(
                             fontSize: 12,
                             color: _kPrimary,
@@ -1044,23 +1293,32 @@ void _showPieceDetails(
                 bold: true),
             const SizedBox(height: 16),
             const _FormSection(
-                label: 'Precificacao (4 pilares)', color: _kPrimary),
+                label: 'Como o preço foi calculado', color: _kPrimary),
             const SizedBox(height: 10),
             _PRow('Valor da hora', currency.format(piece.hourlyValue)),
             _PRow(
-                'Trabalho (${piece.laborHours.toStringAsFixed(2)}h)',
+                'Trabalho (${formatFixed(piece.laborHours, 2)}h)',
                 currency.format(piece.laborCost)),
-            _PRow('Custo operacional',
+            _PRow('Trabalho + custos fixos',
                 currency.format(piece.operationalCost)),
-            _PRow('Custo de producao',
+            _PRow('Custo da peça',
                 currency.format(piece.productionCost),
                 bold: true),
             const Divider(height: 24),
-            _PRow('Preco final sugerido',
+            _PRow('Preço final sugerido',
                 currency.format(piece.suggestedPrice),
                 bold: true,
                 color: const Color(0xFF059669),
                 large: true),
+            if (piece.isSold) ...<Widget>[
+              _PRow('Vendida por', currency.format(piece.soldPrice),
+                  bold: true),
+              _PRow('Lucro da venda', currency.format(piece.saleProfit),
+                  bold: true,
+                  color: piece.saleProfit! < 0
+                      ? const Color(0xFFB91C1C)
+                      : const Color(0xFF059669)),
+            ],
           ],
         ),
       );
@@ -1071,6 +1329,28 @@ void _showPieceDetails(
 // ─────────────────────────────────────────────────────────────────────────────
 // Confirmar exclusao
 // ─────────────────────────────────────────────────────────────────────────────
+
+Future<void> _handleSale(
+  BuildContext context,
+  PieceRecord piece,
+  NumberFormat currency,
+  void Function(String id, double? price) onSetSale,
+) async {
+  if (piece.isSold) {
+    if (await confirmUndoSale(context, piece.pieceName)) {
+      onSetSale(piece.id, null);
+    }
+    return;
+  }
+  final double? price = await promptSalePrice(
+    context,
+    pieceName: piece.pieceName,
+    suggestedPrice: piece.suggestedPrice,
+    productionCost: piece.productionCost,
+    currency: currency,
+  );
+  if (price != null) onSetSale(piece.id, price);
+}
 
 void _confirmDelete(
   BuildContext context,
@@ -1084,10 +1364,12 @@ void _confirmDelete(
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       icon: const Icon(Icons.delete_outline_rounded,
           color: Color(0xFFEF4444), size: 36),
-      title: const Text('Excluir peca',
+      title: const Text('Excluir peça',
           style: TextStyle(fontWeight: FontWeight.w700)),
       content: Text(
-          'Deseja excluir "${piece.pieceName}"?\nO consumo dos tecidos sera devolvido ao estoque.'),
+          piece.isSold
+          ? 'Deseja excluir "${piece.pieceName}"?\nEla já foi vendida: o material NÃO volta ao estoque e a venda sai dos totais.'
+          : 'Deseja excluir "${piece.pieceName}"?\nO consumo dos tecidos será devolvido ao estoque.'),
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.pop(ctx),

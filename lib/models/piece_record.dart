@@ -1,9 +1,9 @@
 import 'fabric_usage.dart';
 
-/// Registro imutavel de uma peca produzida.
+/// Registro imutavel de uma peça produzida.
 ///
 /// Guarda um snapshot dos calculos no momento da criacao, assim os dados
-/// nao mudam mesmo que o tecido seja editado depois.
+/// não mudam mesmo que o tecido seja editado depois.
 class PieceRecord {
   PieceRecord({
     required this.id,
@@ -17,12 +17,15 @@ class PieceRecord {
     required this.productionCost,
     required this.suggestedPrice,
     required this.createdAtIso,
+    this.soldPrice,
+    this.soldAtIso,
+    this.photoName,
   });
 
   final String id;
   final String pieceName;
 
-  /// Lista de tecidos consumidos nesta peca.
+  /// Lista de tecidos consumidos nesta peça.
   final List<FabricUsage> fabricUsages;
 
   /// Custo de aviamentos e outros materiais (R$).
@@ -30,7 +33,7 @@ class PieceRecord {
 
   final double laborHours;
 
-  // ── Precificacao (4 pilares) ──────────────────────────────────────
+  // ── Precificação (4 pilares) ──────────────────────────────────────
   final double hourlyValue;
   final double laborCost;
   final double operationalCost;
@@ -38,6 +41,55 @@ class PieceRecord {
   final double suggestedPrice;
 
   final String createdAtIso;
+
+  /// Valor pelo qual a peça foi vendida; null se ainda não foi.
+  final double? soldPrice;
+  final String? soldAtIso;
+
+  /// Arquivo da foto; null se não tiver.
+  final String? photoName;
+
+  bool get isSold => soldPrice != null;
+
+  /// Lucro real da venda; null se ainda não foi vendida.
+  double? get saleProfit =>
+      soldPrice == null ? null : soldPrice! - productionCost;
+
+  /// Copia mudando so nome e foto, sem mexer em custos e preço.
+  PieceRecord withDetails(String name, String? photo) => PieceRecord(
+        id: id,
+        pieceName: name,
+        photoName: photo,
+        fabricUsages: fabricUsages,
+        additionalMaterialsCost: additionalMaterialsCost,
+        laborHours: laborHours,
+        hourlyValue: hourlyValue,
+        laborCost: laborCost,
+        operationalCost: operationalCost,
+        productionCost: productionCost,
+        suggestedPrice: suggestedPrice,
+        createdAtIso: createdAtIso,
+        soldPrice: soldPrice,
+        soldAtIso: soldAtIso,
+      );
+
+  /// Copia com a venda registrada, ou desfeita se [price] for null.
+  PieceRecord withSale(double? price, String? atIso) => PieceRecord(
+        id: id,
+        pieceName: pieceName,
+        fabricUsages: fabricUsages,
+        additionalMaterialsCost: additionalMaterialsCost,
+        laborHours: laborHours,
+        hourlyValue: hourlyValue,
+        laborCost: laborCost,
+        operationalCost: operationalCost,
+        productionCost: productionCost,
+        suggestedPrice: suggestedPrice,
+        createdAtIso: createdAtIso,
+        soldPrice: price,
+        soldAtIso: atIso,
+        photoName: photoName,
+      );
 
   // ── Calculados a partir da lista de tecidos ───────────────────────
 
@@ -65,10 +117,18 @@ class PieceRecord {
       'productionCost': productionCost,
       'suggestedPrice': suggestedPrice,
       'createdAtIso': createdAtIso,
+      'soldPrice': soldPrice,
+      'soldAtIso': soldAtIso,
+      'photoName': photoName,
     };
   }
 
-  factory PieceRecord.fromJson(Map<String, dynamic> json) {
+  /// [fabricWidths] (id do tecido -> largura) so e usado para converter
+  /// registros antigos, que não guardavam a largura do rolo.
+  factory PieceRecord.fromJson(
+    Map<String, dynamic> json, {
+    Map<String, double> fabricWidths = const <String, double>{},
+  }) {
     // Compatibilidade com registros antigos (formato pre-refatoracao):
     // se existir 'fabricId' no JSON, converte para FabricUsage unico.
     List<FabricUsage> usages;
@@ -77,17 +137,21 @@ class PieceRecord {
           .map((dynamic e) => FabricUsage.fromJson(e as Map<String, dynamic>))
           .toList();
     } else {
+      final double usedWidth = (json['usedWidthMeters'] as num).toDouble();
+      final double usedLength = (json['usedLengthMeters'] as num).toDouble();
+      final double rollWidth = fabricWidths[json['fabricId']] ?? 1;
+      final double linear =
+          rollWidth > 0 ? usedWidth * usedLength / rollWidth : 0;
       usages = <FabricUsage>[
         FabricUsage(
           fabricId: json['fabricId'] as String,
           fabricName: json['fabricName'] as String,
-          fabricWidthMeters: 1,
-          fabricPricePerMeter: (json['fabricCost'] as num).toDouble() /
-              (((json['usedWidthMeters'] as num).toDouble() *
-                      (json['usedLengthMeters'] as num).toDouble()) /
-                  1),
-          usedWidthMeters: (json['usedWidthMeters'] as num).toDouble(),
-          usedLengthMeters: (json['usedLengthMeters'] as num).toDouble(),
+          fabricWidthMeters: rollWidth,
+          fabricPricePerMeter: linear > 0
+              ? (json['fabricCost'] as num).toDouble() / linear
+              : 0,
+          usedWidthMeters: usedWidth,
+          usedLengthMeters: usedLength,
         ),
       ];
     }
@@ -105,6 +169,9 @@ class PieceRecord {
       productionCost: (json['productionCost'] as num).toDouble(),
       suggestedPrice: (json['suggestedPrice'] as num).toDouble(),
       createdAtIso: json['createdAtIso'] as String,
+      soldPrice: (json['soldPrice'] as num?)?.toDouble(),
+      soldAtIso: json['soldAtIso'] as String?,
+      photoName: json['photoName'] as String?,
     );
   }
 }

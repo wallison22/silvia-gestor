@@ -20,6 +20,22 @@ class BusinessConfig {
     );
   }
 
+  String? validate() {
+    if (desiredMonthlySalary <= 0) {
+      return 'O salário mensal deve ser maior que zero.';
+    }
+    if (monthlyWorkHours <= 0 || monthlyWorkHours > 744) {
+      return 'As horas por mês devem estar entre 1 e 744.';
+    }
+    if (fixedCostPercent < 0) {
+      return 'Os custos fixos não podem ser negativos.';
+    }
+    if (profitPercent < 0 || profitPercent >= 100) {
+      return 'O lucro deve ser de 0 até menos de 100% (margem sobre a venda).';
+    }
+    return null;
+  }
+
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'desiredMonthlySalary': desiredMonthlySalary,

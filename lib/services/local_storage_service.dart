@@ -42,9 +42,13 @@ class LocalStorageService {
         .map((String e) =>
             FabricStock.fromJson(jsonDecode(e) as Map<String, dynamic>))
         .toList();
+    final Map<String, double> fabricWidths = <String, double>{
+      for (final FabricStock f in fabrics) f.id: f.widthMeters,
+    };
     final List<PieceRecord> pieces = piecesRaw
-        .map((String e) =>
-            PieceRecord.fromJson(jsonDecode(e) as Map<String, dynamic>))
+        .map((String e) => PieceRecord.fromJson(
+            jsonDecode(e) as Map<String, dynamic>,
+            fabricWidths: fabricWidths))
         .toList();
     final List<YarnStock> yarns = yarnsRaw
         .map((String e) =>
@@ -66,6 +70,17 @@ class LocalStorageService {
       crochetPieces: crochetPieces,
       config: config,
     );
+  }
+
+  Future<DateTime?> lastBackup() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final String? v = prefs.getString(StorageKeys.lastBackup);
+    return v == null ? null : DateTime.tryParse(v);
+  }
+
+  Future<void> setLastBackup(DateTime when) async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setString(StorageKeys.lastBackup, when.toIso8601String());
   }
 
   Future<void> save({

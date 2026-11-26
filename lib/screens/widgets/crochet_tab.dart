@@ -6,10 +6,16 @@ import '../../core/utils/parsing.dart';
 import '../../models/business_config.dart';
 import '../../models/create_crochet_piece_input.dart';
 import '../../models/crochet_piece_record.dart';
+import '../../models/piece_form_mode.dart';
 import '../../models/pricing_breakdown.dart';
 import '../../models/yarn_stock.dart';
 import '../../models/yarn_usage.dart';
 import '../../services/pricing_service.dart';
+import '../../services/quote_service.dart';
+import 'form_error.dart';
+import 'photo_field.dart';
+import 'sale_dialog.dart';
+import 'search_section.dart';
 
 const Color _kPrimary = Color(0xFF1E40AF);
 const Color _kAccent = Color(0xFFF59E0B);
@@ -24,11 +30,13 @@ class CrochetTab extends StatefulWidget {
     required this.crochetPieces,
     required this.config,
     required this.currency,
-    required this.onAddYarn,
+    required this.onSaveYarn,
     required this.onDeleteYarn,
     required this.onAddStockToYarn,
     required this.onCreatePiece,
+    required this.onUpdatePiece,
     required this.onDeletePiece,
+    required this.onSetSale,
     super.key,
   });
 
@@ -36,11 +44,15 @@ class CrochetTab extends StatefulWidget {
   final List<CrochetPieceRecord> crochetPieces;
   final BusinessConfig config;
   final NumberFormat currency;
-  final void Function(YarnStock yarn) onAddYarn;
+  final void Function(YarnStock yarn) onSaveYarn;
   final void Function(String id) onDeleteYarn;
-  final void Function(String yarnId, double extraGrams) onAddStockToYarn;
-  final void Function(CreateCrochetPieceInput input) onCreatePiece;
+  final void Function(String yarnId, double extraGrams, double newSkeinPrice)
+      onAddStockToYarn;
+  final String? Function(CreateCrochetPieceInput input) onCreatePiece;
+  final String? Function(String id, CreateCrochetPieceInput input)
+      onUpdatePiece;
   final void Function(String id) onDeletePiece;
+  final void Function(String id, double? price) onSetSale;
 
   @override
   State<CrochetTab> createState() => _CrochetTabState();
@@ -80,7 +92,7 @@ class _CrochetTabState extends State<CrochetTab>
                 fontWeight: FontWeight.w500, fontSize: 13),
             tabs: const <Tab>[
               Tab(icon: Icon(Icons.grain, size: 18), text: 'Linhas'),
-              Tab(icon: Icon(Icons.loop_rounded, size: 18), text: 'Pecas'),
+              Tab(icon: Icon(Icons.loop_rounded, size: 18), text: 'Peças'),
             ],
           ),
         ),
@@ -92,7 +104,7 @@ class _CrochetTabState extends State<CrochetTab>
                 yarns: widget.yarns,
                 crochetPieces: widget.crochetPieces,
                 currency: widget.currency,
-                onAddYarn: widget.onAddYarn,
+                onSaveYarn: widget.onSaveYarn,
                 onDeleteYarn: widget.onDeleteYarn,
                 onAddStock: widget.onAddStockToYarn,
               ),
@@ -102,7 +114,9 @@ class _CrochetTabState extends State<CrochetTab>
                 config: widget.config,
                 currency: widget.currency,
                 onCreatePiece: widget.onCreatePiece,
+                onUpdatePiece: widget.onUpdatePiece,
                 onDeletePiece: widget.onDeletePiece,
+                onSetSale: widget.onSetSale,
               ),
             ],
           ),
@@ -177,12 +191,12 @@ class _DashboardCard extends StatelessWidget {
                     child: Icon(icon, color: Colors.white, size: 20),
                   ),
                   const SizedBox(width: 12),
-                  Text(title,
+                  Expanded(child: Text(title,
                       style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,
                           fontSize: 16,
-                          letterSpacing: -0.2)),
+                          letterSpacing: -0.2))),
                 ],
               ),
             ),
@@ -193,7 +207,9 @@ class _DashboardCard extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children:
-                    stats.map((s) => _StatTile(data: s)).toList(),
+                    stats
+                    .map((s) => Expanded(child: _StatTile(data: s)))
+                    .toList(),
               ),
             ),
           ],
@@ -221,12 +237,18 @@ class _StatTile extends StatelessWidget {
           child: Icon(data.icon, color: data.color, size: 22),
         ),
         const SizedBox(height: 8),
-        Text(data.value,
-            style: const TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 14,
-                color: _kTextDark,
-                letterSpacing: -0.3)),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 3),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(data.value,
+                style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                    color: _kTextDark,
+                    letterSpacing: -0.3)),
+          ),
+        ),
         const SizedBox(height: 2),
         Text(data.label,
             style:
@@ -312,7 +334,7 @@ class _YarnsSubTab extends StatelessWidget {
     required this.yarns,
     required this.crochetPieces,
     required this.currency,
-    required this.onAddYarn,
+    required this.onSaveYarn,
     required this.onDeleteYarn,
     required this.onAddStock,
   });
@@ -320,9 +342,9 @@ class _YarnsSubTab extends StatelessWidget {
   final List<YarnStock> yarns;
   final List<CrochetPieceRecord> crochetPieces;
   final NumberFormat currency;
-  final void Function(YarnStock) onAddYarn;
+  final void Function(YarnStock) onSaveYarn;
   final void Function(String) onDeleteYarn;
-  final void Function(String, double) onAddStock;
+  final void Function(String, double, double) onAddStock;
 
   @override
   Widget build(BuildContext context) {
@@ -361,12 +383,17 @@ class _YarnsSubTab extends StatelessWidget {
                 subtitle: 'Toque em + para adicionar sua primeira linha.',
               )
             else
-              ...yarns.map((YarnStock yarn) => _YarnCard(
+              SearchSection<YarnStock>(
+                  items: yarns,
+                  textOf: (YarnStock y) => '${y.name} ${y.storeName}',
+                  itemBuilder: (YarnStock yarn) => _YarnCard(
                     yarn: yarn,
                     currency: currency,
                     usedInPieces: crochetPieces.any((CrochetPieceRecord p) =>
                         p.yarnUsages
                             .any((YarnUsage u) => u.yarnId == yarn.id)),
+                    onEdit: () => _showYarnFormSheet(context, onSaveYarn,
+                        initial: yarn),
                     onAddStock: () =>
                         _showAddStockSheet(context, yarn, onAddStock),
                     onDelete: () =>
@@ -379,7 +406,7 @@ class _YarnsSubTab extends StatelessWidget {
           bottom: 16,
           child: FloatingActionButton.extended(
             heroTag: 'fab_yarn',
-            onPressed: () => _showYarnFormSheet(context, onAddYarn),
+            onPressed: () => _showYarnFormSheet(context, onSaveYarn),
             icon: const Icon(Icons.add_rounded),
             label: const Text('Adicionar linha'),
           ),
@@ -394,6 +421,7 @@ class _YarnCard extends StatelessWidget {
     required this.yarn,
     required this.currency,
     required this.usedInPieces,
+    required this.onEdit,
     required this.onAddStock,
     required this.onDelete,
   });
@@ -401,6 +429,7 @@ class _YarnCard extends StatelessWidget {
   final YarnStock yarn;
   final NumberFormat currency;
   final bool usedInPieces;
+  final VoidCallback onEdit;
   final VoidCallback onAddStock;
   final VoidCallback onDelete;
 
@@ -471,7 +500,7 @@ class _YarnCard extends StatelessWidget {
                               _Chip(
                                 label: 'Estoque',
                                 value:
-                                    '${yarn.stockWeightGrams.toStringAsFixed(0)}g',
+                                    '${formatFixed(yarn.stockWeightGrams, 0)}g',
                                 color: accentColor,
                               ),
                               _Chip(
@@ -494,6 +523,12 @@ class _YarnCard extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: <Widget>[
                         IconButton(
+                          icon: const Icon(Icons.edit_outlined, size: 20),
+                          color: _kPrimary,
+                          tooltip: 'Editar linha',
+                          onPressed: onEdit,
+                        ),
+                        IconButton(
                           icon: Icon(Icons.add_circle_outline_rounded,
                               color: _kPrimary.withValues(alpha: 0.8)),
                           tooltip: 'Adicionar estoque',
@@ -508,7 +543,7 @@ class _YarnCard extends StatelessWidget {
                             size: 20,
                           ),
                           tooltip: usedInPieces
-                              ? 'Usada em pecas'
+                              ? 'Usada em peças'
                               : 'Excluir linha',
                           onPressed: usedInPieces ? null : onDelete,
                         ),
@@ -561,7 +596,7 @@ class _Chip extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sub-aba: Pecas de croche
+// Sub-aba: Peças de crochê
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _PiecesSubTab extends StatelessWidget {
@@ -571,20 +606,52 @@ class _PiecesSubTab extends StatelessWidget {
     required this.config,
     required this.currency,
     required this.onCreatePiece,
+    required this.onUpdatePiece,
     required this.onDeletePiece,
+    required this.onSetSale,
   });
 
   final List<YarnStock> yarns;
   final List<CrochetPieceRecord> pieces;
   final BusinessConfig config;
   final NumberFormat currency;
-  final void Function(CreateCrochetPieceInput) onCreatePiece;
+  final String? Function(CreateCrochetPieceInput) onCreatePiece;
+  final String? Function(String id, CreateCrochetPieceInput input)
+      onUpdatePiece;
   final void Function(String) onDeletePiece;
+  final void Function(String id, double? price) onSetSale;
+
+  void _openForm(BuildContext context, PieceFormMode mode,
+      [CrochetPieceRecord? piece]) {
+    List<YarnStock> available = yarns;
+    if (mode == PieceFormMode.edit) {
+      // O material da propria peça volta a contar como disponível.
+      available = yarns.map((YarnStock s) {
+        final double back = piece!.yarnUsages
+            .where((u) => u.yarnId == s.id)
+            .fold(0, (double t, u) => t + u.usedWeightGrams);
+        return s.copyWith(stockWeightGrams: s.stockWeightGrams + back);
+      }).toList();
+    }
+    _showPieceFormSheet(
+      context,
+      yarns: available,
+      config: config,
+      currency: currency,
+      mode: mode,
+      initial: piece,
+      onSave: mode == PieceFormMode.edit
+          ? (input) => onUpdatePiece(piece!.id, input)
+          : onCreatePiece,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final double totalRevenue = pieces.fold(
-        0, (double s, CrochetPieceRecord p) => s + p.suggestedPrice);
+        0, (double s, CrochetPieceRecord p) => s + (p.isSold ? 0 : p.suggestedPrice));
+    final double totalSold = pieces.fold(
+        0, (double s, CrochetPieceRecord p) => s + (p.soldPrice ?? 0));
     final double totalCost = pieces.fold(
         0, (double s, CrochetPieceRecord p) => s + p.productionCost);
 
@@ -594,13 +661,13 @@ class _PiecesSubTab extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
           children: <Widget>[
             _DashboardCard(
-              title: 'Pecas de Croche',
+              title: 'Peças de Crochê',
               icon: Icons.loop_rounded,
               gradient: const <Color>[Color(0xFF1E3A8A), Color(0xFF2563EB)],
               stats: <_StatData>[
                 _StatData(
                   icon: Icons.loop_rounded,
-                  label: 'Pecas',
+                  label: 'Peças',
                   value: '${pieces.length}',
                   color: _kPrimary,
                 ),
@@ -612,28 +679,53 @@ class _PiecesSubTab extends StatelessWidget {
                 ),
                 _StatData(
                   icon: Icons.trending_up_rounded,
-                  label: 'Receita',
+                  label: 'A vender',
                   value: currency.format(totalRevenue),
+                  color: const Color(0xFFF59E0B),
+                ),
+                _StatData(
+                  icon: Icons.sell_rounded,
+                  label: 'Vendido',
+                  value: currency.format(totalSold),
                   color: const Color(0xFF059669),
                 ),
               ],
             ),
             const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () => _openForm(context, PieceFormMode.quote),
+              icon: const Icon(Icons.calculate_outlined),
+              label: const Text('Fazer orçamento'),
+            ),
+            const SizedBox(height: 16),
             if (pieces.isEmpty)
               const _EmptyState(
                 icon: Icons.loop_outlined,
-                title: 'Nenhuma peca registrada',
-                subtitle: 'Toque em + para registrar sua primeira peca.',
+                title: 'Nenhuma peça registrada',
+                subtitle: 'Toque em + para registrar sua primeira peça.',
               )
             else
-              ...pieces.map((CrochetPieceRecord piece) => _CrochetPieceCard(
-                    piece: piece,
-                    currency: currency,
-                    onTap: () =>
-                        _showPieceDetails(context, piece, currency),
-                    onDelete: () =>
-                        _confirmDeletePiece(context, piece, onDeletePiece),
-                  )),
+              SearchSection<CrochetPieceRecord>(
+                items: pieces.reversed.toList(),
+                textOf: (CrochetPieceRecord p) => '${p.pieceName} ${p.yarnsDescription}',
+                isSold: (CrochetPieceRecord p) => p.isSold,
+                itemBuilder: (CrochetPieceRecord p) => _CrochetPieceCard(
+                  piece: p,
+                  currency: currency,
+                  onTap: () => _showPieceDetails(
+                    context,
+                    p,
+                    currency,
+                    onEdit: () => _openForm(context, PieceFormMode.edit, p),
+                    onDuplicate: yarns.isEmpty
+                        ? null
+                        : () =>
+                            _openForm(context, PieceFormMode.duplicate, p),
+                  ),
+                  onDelete: () => _confirmDeletePiece(context, p, onDeletePiece),
+                  onSale: () => _handleSale(context, p, currency, onSetSale),
+                ),
+              ),
           ],
         ),
         Positioned(
@@ -643,15 +735,9 @@ class _PiecesSubTab extends StatelessWidget {
             heroTag: 'fab_crochet_piece',
             onPressed: yarns.isEmpty
                 ? null
-                : () => _showPieceFormSheet(
-                      context,
-                      yarns: yarns,
-                      config: config,
-                      currency: currency,
-                      onSave: onCreatePiece,
-                    ),
+                : () => _openForm(context, PieceFormMode.create),
             icon: const Icon(Icons.add_rounded),
-            label: const Text('Registrar peca'),
+            label: const Text('Registrar peça'),
           ),
         ),
       ],
@@ -665,12 +751,14 @@ class _CrochetPieceCard extends StatelessWidget {
     required this.currency,
     required this.onTap,
     required this.onDelete,
+    required this.onSale,
   });
 
   final CrochetPieceRecord piece;
   final NumberFormat currency;
   final VoidCallback onTap;
   final VoidCallback onDelete;
+  final VoidCallback onSale;
 
   @override
   Widget build(BuildContext context) {
@@ -708,6 +796,9 @@ class _CrochetPieceCard extends StatelessWidget {
                     padding: const EdgeInsets.all(14),
                     child: Row(
                       children: <Widget>[
+                        if (piece.photoName != null)
+                          PieceThumb(piece.photoName, width: 48)
+                        else
                         Container(
                           width: 48,
                           height: 48,
@@ -737,7 +828,9 @@ class _CrochetPieceCard extends StatelessWidget {
                                     overflow: TextOverflow.ellipsis),
                               ],
                               const SizedBox(height: 10),
-                              Row(
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 6,
                                 children: <Widget>[
                                   _PriceBadge(
                                     label: 'Custo',
@@ -745,24 +838,46 @@ class _CrochetPieceCard extends StatelessWidget {
                                         currency.format(piece.productionCost),
                                     color: const Color(0xFF7C3AED),
                                   ),
-                                  const SizedBox(width: 8),
                                   _PriceBadge(
-                                    label: 'Preco',
+                                    label: 'Preço',
                                     value: currency
                                         .format(piece.suggestedPrice),
                                     color: const Color(0xFF059669),
                                   ),
+                                  if (piece.isSold)
+                                    _PriceBadge(
+                                      label: 'Vendida por',
+                                      value: currency.format(piece.soldPrice),
+                                      color: _kPrimary,
+                                    ),
                                 ],
                               ),
                             ],
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded,
-                              size: 20),
-                          color: const Color(0xFFFCA5A5),
-                          onPressed: onDelete,
-                          tooltip: 'Excluir',
+                        Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: <Widget>[
+                            IconButton(
+                              icon: Icon(
+                                  piece.isSold
+                                      ? Icons.undo_rounded
+                                      : Icons.sell_outlined,
+                                  size: 20),
+                              color: const Color(0xFF059669),
+                              onPressed: onSale,
+                              tooltip: piece.isSold
+                                  ? 'Desfazer venda'
+                                  : 'Marcar como vendida',
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline_rounded,
+                                  size: 20),
+                              color: const Color(0xFFFCA5A5),
+                              onPressed: onDelete,
+                              tooltip: 'Excluir',
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -816,17 +931,37 @@ class _PriceBadge extends StatelessWidget {
 
 Future<void> _showYarnFormSheet(
   BuildContext context,
-  void Function(YarnStock) onSave,
-) async {
-  final TextEditingController nameCtrl = TextEditingController();
-  final TextEditingController storeCtrl = TextEditingController();
-  final TextEditingController weightCtrl = TextEditingController();
-  final TextEditingController priceCtrl = TextEditingController();
-  final TextEditingController stockCtrl = TextEditingController();
+  void Function(YarnStock) onSave, {
+  YarnStock? initial,
+}) async {
+  final bool isEdit = initial != null;
+  String fmt(double? v) => v == null ? '' : formatNumber(v);
+
+  // Campo não alterado mantem o valor original, sem perder casas decimais.
+  double read(FormReader reader, String label, TextEditingController ctrl,
+      double? original) {
+    if (original != null && ctrl.text == formatNumber(original)) {
+      return original;
+    }
+    return reader.number(label, ctrl.text, thousands: true);
+  }
+
+  final TextEditingController nameCtrl =
+      TextEditingController(text: initial?.name ?? '');
+  final TextEditingController storeCtrl =
+      TextEditingController(text: initial?.storeName ?? '');
+  final TextEditingController weightCtrl =
+      TextEditingController(text: fmt(initial?.skeinWeightGrams));
+  final TextEditingController priceCtrl =
+      TextEditingController(text: fmt(initial?.skeinPrice));
+  final TextEditingController stockCtrl =
+      TextEditingController(text: fmt(initial?.stockWeightGrams));
+  String? formError;
 
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -834,8 +969,8 @@ Future<void> _showYarnFormSheet(
     builder: (BuildContext ctx) {
       return StatefulBuilder(
         builder: (BuildContext ctx2, StateSetter setState) {
-          final double weight = parseDouble(weightCtrl.text);
-          final double price = parseDouble(priceCtrl.text);
+          final double weight = parseDouble(weightCtrl.text, thousands: true);
+          final double price = parseDouble(priceCtrl.text, thousands: true);
           final double pricePerGram = weight > 0 ? price / weight : 0;
 
           return Padding(
@@ -868,7 +1003,7 @@ Future<void> _showYarnFormSheet(
                             color: _kPrimary, size: 20),
                       ),
                       const SizedBox(width: 12),
-                      Text('Cadastrar Linha',
+                      Text(isEdit ? 'Editar Linha' : 'Cadastrar Linha',
                           style: Theme.of(ctx2).textTheme.titleMedium),
                     ],
                   ),
@@ -917,7 +1052,7 @@ Future<void> _showYarnFormSheet(
                                   decimal: true),
                           onChanged: (_) => setState(() {}),
                           decoration: const InputDecoration(
-                            labelText: 'Preco pago (R\$)',
+                            labelText: 'Preço pago (R\$)',
                             prefixIcon: Icon(Icons.attach_money_outlined),
                           ),
                         ),
@@ -939,7 +1074,7 @@ Future<void> _showYarnFormSheet(
                               size: 15, color: _kPrimary),
                           const SizedBox(width: 6),
                           Text(
-                            'R\$ ${pricePerGram.toStringAsFixed(4)} por grama',
+                            'R\$ ${formatFixed(pricePerGram, 4)} por grama',
                             style: const TextStyle(
                                 fontSize: 12,
                                 color: _kPrimary,
@@ -955,45 +1090,55 @@ Future<void> _showYarnFormSheet(
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
                     onChanged: (_) => setState(() {}),
-                    decoration: const InputDecoration(
-                      labelText: 'Estoque inicial (g)',
-                      helperText:
-                          'Deixe em branco para usar o peso do novelo',
-                      prefixIcon: Icon(Icons.inventory_2_outlined),
+                    decoration: InputDecoration(
+                      labelText:
+                          isEdit ? 'Estoque atual (g)' : 'Estoque inicial (g)',
+                      helperText: isEdit
+                          ? null
+                          : 'Deixe em branco para usar o peso do novelo',
+                      prefixIcon: const Icon(Icons.inventory_2_outlined),
                       suffixText: 'g',
                     ),
                   ),
                   const SizedBox(height: 20),
+                  FormError(formError),
                   FilledButton.icon(
                     onPressed: () {
-                      final double skeinWeight =
-                          parseDouble(weightCtrl.text);
+                      final FormReader reader = FormReader();
+                      final double skeinWeight = read(
+                          reader,
+                          'Peso do novelo (g)',
+                          weightCtrl,
+                          initial?.skeinWeightGrams);
                       final double stockGrams =
-                          stockCtrl.text.trim().isEmpty
+                          !isEdit && stockCtrl.text.trim().isEmpty
                               ? skeinWeight
-                              : parseDouble(stockCtrl.text);
+                              : read(reader, 'Estoque (g)', stockCtrl,
+                                  initial?.stockWeightGrams);
 
                       final YarnStock yarn = YarnStock(
-                        id: newId(),
+                        id: initial?.id ?? newId(),
                         name: nameCtrl.text.trim(),
                         storeName: storeCtrl.text.trim(),
                         skeinWeightGrams: skeinWeight,
-                        skeinPrice: parseDouble(priceCtrl.text),
+                        skeinPrice: read(reader, 'Preço pago', priceCtrl,
+                            initial?.skeinPrice),
                         stockWeightGrams: stockGrams,
-                        createdAtIso: DateTime.now().toIso8601String(),
+                        createdAtIso: initial?.createdAtIso ??
+                            DateTime.now().toIso8601String(),
                       );
 
-                      final String? error = yarn.validate();
+                      final String? error = reader.error ?? yarn.validate();
                       if (error != null) {
-                        ScaffoldMessenger.of(ctx2).showSnackBar(
-                            SnackBar(content: Text(error)));
+                        setState(() => formError = error);
                         return;
                       }
                       onSave(yarn);
                       Navigator.pop(ctx2);
                     },
                     icon: const Icon(Icons.check_rounded),
-                    label: const Text('Salvar linha'),
+                    label:
+                        Text(isEdit ? 'Salvar alterações' : 'Salvar linha'),
                   ),
                 ],
               ),
@@ -1012,19 +1157,24 @@ Future<void> _showYarnFormSheet(
 Future<void> _showAddStockSheet(
   BuildContext context,
   YarnStock yarn,
-  void Function(String, double) onAddStock,
+  void Function(String, double, double) onAddStock,
 ) async {
   final TextEditingController ctrl = TextEditingController(
-      text: yarn.skeinWeightGrams.toStringAsFixed(0));
+      text: formatNumber(yarn.skeinWeightGrams));
+  final TextEditingController priceCtrl =
+      TextEditingController(text: formatNumber(yarn.skeinPrice));
+  String? formError;
 
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
-    builder: (BuildContext ctx) {
+    builder: (_) => StatefulBuilder(
+        builder: (BuildContext ctx, StateSetter setS) {
       return Padding(
         padding: EdgeInsets.fromLTRB(
             20, 12, 20, MediaQuery.of(ctx).viewInsets.bottom + 24),
@@ -1078,23 +1228,44 @@ Future<void> _showAddStockSheet(
               decoration: InputDecoration(
                 labelText: 'Gramas a adicionar',
                 helperText:
-                    'Novelo padrao: ${yarn.skeinWeightGrams.toStringAsFixed(0)}g',
+                    'Novelo padrão: ${formatNumber(yarn.skeinWeightGrams)}g',
                 prefixIcon: const Icon(Icons.add_circle_outline),
                 suffixText: 'g',
               ),
             ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: priceCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText:
+                    'Preço do novelo de ${formatNumber(yarn.skeinWeightGrams)}g (R\$)',
+                helperText: 'Se mudou, as próximas peças usam o novo preço',
+                prefixIcon: const Icon(Icons.attach_money_outlined),
+              ),
+            ),
             const SizedBox(height: 16),
+            FormError(formError),
             FilledButton.icon(
               onPressed: () {
-                final double extra = parseDouble(ctrl.text);
-                if (extra <= 0) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    const SnackBar(
-                        content: Text('Informe uma quantidade valida.')),
-                  );
+                final FormReader reader = FormReader();
+                final double price =
+                    priceCtrl.text == formatNumber(yarn.skeinPrice)
+                        ? yarn.skeinPrice
+                        : reader.number('Preço do novelo', priceCtrl.text,
+                            thousands: true);
+                if (reader.error != null || price < 0) {
+                  setS(() => formError =
+                      reader.error ?? 'O preço não pode ser negativo.');
                   return;
                 }
-                onAddStock(yarn.id, extra);
+                final double extra = parseDouble(ctrl.text, thousands: true);
+                if (extra <= 0) {
+                  setS(() => formError = 'Informe uma quantidade válida.');
+                  return;
+                }
+                onAddStock(yarn.id, extra, price);
                 Navigator.pop(ctx);
               },
               icon: const Icon(Icons.check_rounded),
@@ -1103,7 +1274,7 @@ Future<void> _showAddStockSheet(
           ],
         ),
       );
-    },
+    }),
   );
 }
 
@@ -1146,13 +1317,13 @@ void _confirmDeleteYarn(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Formulario: Registrar peca de croche
+// Formulario: Registrar peça de crochê
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _YarnRow {
-  _YarnRow(String initialYarnId)
+  _YarnRow(String initialYarnId, {String grams = ''})
       : yarnId = initialYarnId,
-        gramsController = TextEditingController();
+        gramsController = TextEditingController(text: grams);
 
   String yarnId;
   final TextEditingController gramsController;
@@ -1165,11 +1336,14 @@ Future<void> _showPieceFormSheet(
   required List<YarnStock> yarns,
   required BusinessConfig config,
   required NumberFormat currency,
-  required void Function(CreateCrochetPieceInput) onSave,
+  required String? Function(CreateCrochetPieceInput input) onSave,
+  PieceFormMode mode = PieceFormMode.create,
+  CrochetPieceRecord? initial,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -1179,6 +1353,8 @@ Future<void> _showPieceFormSheet(
       config: config,
       currency: currency,
       onSave: onSave,
+      mode: mode,
+      initial: initial,
     ),
   );
 }
@@ -1189,12 +1365,18 @@ class _PieceFormSheet extends StatefulWidget {
     required this.config,
     required this.currency,
     required this.onSave,
+    required this.mode,
+    this.initial,
   });
 
   final List<YarnStock> yarns;
   final BusinessConfig config;
   final NumberFormat currency;
-  final void Function(CreateCrochetPieceInput) onSave;
+  final String? Function(CreateCrochetPieceInput) onSave;
+  final PieceFormMode mode;
+
+  /// Peça a editar ou duplicar.
+  final CrochetPieceRecord? initial;
 
   @override
   State<_PieceFormSheet> createState() => _PieceFormSheetState();
@@ -1209,17 +1391,39 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
       TextEditingController();
   final TextEditingController _finishedWeightCtrl = TextEditingController();
   bool _showWeightCalc = false;
+  final TextEditingController _quantityCtrl =
+      TextEditingController(text: '1');
   late final List<_YarnRow> _rows;
+  String? _photoName;
+  String? _error;
+
+  bool get _isQuote => widget.mode == PieceFormMode.quote;
+  bool get _isEdit => widget.mode == PieceFormMode.edit;
 
   @override
   void initState() {
     super.initState();
-    _rows = <_YarnRow>[_YarnRow(widget.yarns.first.id)];
+    _rows = <_YarnRow>[];
+    final CrochetPieceRecord? initial = widget.initial;
+    if (initial != null) {
+      _nameCtrl.text = initial.pieceName;
+      _otherCostCtrl.text = formatNumber(initial.otherMaterialsCost);
+      _laborCtrl.text = formatNumber(initial.laborHours);
+      _photoName = initial.photoName;
+      for (final YarnUsage u in initial.yarnUsages) {
+        if (!widget.yarns.any((YarnStock y) => y.id == u.yarnId)) continue;
+        _rows.add(_YarnRow(u.yarnId, grams: formatNumber(u.usedWeightGrams)));
+      }
+    }
+    if (_rows.isEmpty && widget.yarns.isNotEmpty) {
+      _rows.add(_YarnRow(widget.yarns.first.id));
+    }
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _quantityCtrl.dispose();
     _otherCostCtrl.dispose();
     _laborCtrl.dispose();
     _baseMaterialsWeightCtrl.dispose();
@@ -1230,43 +1434,100 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
     super.dispose();
   }
 
-  List<YarnUsage> _buildUsages() {
-    return _rows.map((_YarnRow row) {
-      final YarnStock yarn =
-          widget.yarns.firstWhere((YarnStock y) => y.id == row.yarnId);
-      return YarnUsage(
-        yarnId: yarn.id,
-        yarnName: yarn.name,
-        yarnPricePerGram: yarn.pricePerGram,
-        usedWeightGrams: parseDouble(row.gramsController.text),
+  /// Uso da linha. Ao editar, mantem o preço que a peça já tinha para ela.
+  YarnUsage _usageOf(_YarnRow row, FormReader reader) {
+    final YarnStock yarn =
+        widget.yarns.firstWhere((YarnStock y) => y.id == row.yarnId);
+    YarnUsage? original;
+    if (_isEdit) {
+      for (final YarnUsage u in widget.initial!.yarnUsages) {
+        if (u.yarnId == yarn.id) original = u;
+      }
+    }
+    return YarnUsage(
+      yarnId: yarn.id,
+      yarnName: yarn.name,
+      yarnPricePerGram: original?.yarnPricePerGram ?? yarn.pricePerGram,
+      usedWeightGrams: reader.number(
+          'Quantidade usada (g)', row.gramsController.text,
+          thousands: true),
+    );
+  }
+
+  List<YarnUsage> _buildUsages(FormReader reader) =>
+      _rows.map((_YarnRow r) => _usageOf(r, reader)).toList();
+
+  CreateCrochetPieceInput _readInput(FormReader reader) =>
+      CreateCrochetPieceInput(
+        pieceName: _nameCtrl.text.trim(),
+        yarnUsages: _buildUsages(reader),
+        otherMaterialsCost: reader.number(
+            'Custo de outros materiais', _otherCostCtrl.text,
+            thousands: true, emptyAsZero: true),
+        laborHours: reader.hours('Tempo gasto (horas)', _laborCtrl.text),
+        quantity:
+            _isEdit ? 1 : reader.number('Quantidade', _quantityCtrl.text),
+        photoName: _photoName,
       );
-    }).toList();
+
+  Future<void> _shareQuote() async {
+    final FormReader reader = FormReader();
+    final CreateCrochetPieceInput input = _readInput(reader);
+    final String? err = reader.error ??
+        input.validate(requireMaterials: false) ??
+        widget.config.validate();
+    setState(() => _error = err);
+    if (err != null) return;
+    final double materials =
+        input.yarnUsages.fold(0, (double s, u) => s + u.cost);
+    final PricingBreakdown pricing = calculatePricing(
+      config: widget.config,
+      laborHours: input.laborHours,
+      materialsCost: materials + input.otherMaterialsCost,
+    );
+    try {
+      await shareText(buildQuoteText(
+        pieceName: input.pieceName,
+        unitPrice: pricing.suggestedPrice,
+        quantity: input.quantity.round(),
+        currency: widget.currency,
+      ));
+    } catch (e) {
+      debugPrint('Falha ao compartilhar: $e');
+      if (mounted) {
+        setState(() => _error = 'Não foi possível abrir o compartilhamento.');
+      }
+    }
   }
 
   void _applyWeightCalc() {
-    final double baseWeight = parseDouble(_baseMaterialsWeightCtrl.text);
-    final double finishedWeight = parseDouble(_finishedWeightCtrl.text);
+    final double baseWeight = parseDouble(_baseMaterialsWeightCtrl.text,
+        thousands: true);
+    final double finishedWeight = parseDouble(_finishedWeightCtrl.text,
+        thousands: true);
     final double yarnUsed = finishedWeight - baseWeight;
     if (yarnUsed <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
             content: Text(
-                'Peso da peca pronta deve ser maior que o peso dos materiais base.')),
+                'Peso da peça pronta deve ser maior que o peso dos materiais base.')),
       );
       return;
     }
     setState(() {
-      _rows.first.gramsController.text = yarnUsed.toStringAsFixed(1);
+      _rows.first.gramsController.text = formatNumber(yarnUsed);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final List<YarnUsage> usages = _buildUsages();
+    final List<YarnUsage> usages = _buildUsages(FormReader());
+    final double quantity = parseDouble(_quantityCtrl.text);
     final double totalYarnCost =
         usages.fold(0, (double s, YarnUsage u) => s + u.cost);
-    final double otherCost = parseDouble(_otherCostCtrl.text);
-    final double laborHours = parseDouble(_laborCtrl.text);
+    final double otherCost =
+        parseDouble(_otherCostCtrl.text, thousands: true);
+    final double laborHours = tryParseHours(_laborCtrl.text) ?? 0;
     final PricingBreakdown preview = calculatePricing(
       config: widget.config,
       laborHours: laborHours,
@@ -1303,7 +1564,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                       color: _kPrimary, size: 20),
                 ),
                 const SizedBox(width: 12),
-                Text('Registrar Peca de Croche',
+                Text(widget.mode.title,
                     style: Theme.of(context).textTheme.titleMedium),
               ],
             ),
@@ -1312,11 +1573,16 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
               controller: _nameCtrl,
               textCapitalization: TextCapitalization.words,
               decoration: const InputDecoration(
-                labelText: 'Nome da peca',
+                labelText: 'Nome da peça',
                 prefixIcon: Icon(Icons.label_outline),
               ),
             ),
             const SizedBox(height: 20),
+            PhotoField(
+              photoName: _photoName,
+              onChanged: (String? v) => setState(() => _photoName = v),
+            ),
+            const SizedBox(height: 16),
             const _FormSection(label: 'Linhas utilizadas', color: _kPrimary),
             const SizedBox(height: 10),
             ..._rows.asMap().entries.map((MapEntry<int, _YarnRow> entry) {
@@ -1324,14 +1590,11 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
               final _YarnRow row = entry.value;
               final YarnStock yarn = widget.yarns
                   .firstWhere((YarnStock y) => y.id == row.yarnId);
-              final YarnUsage usage = YarnUsage(
-                yarnId: yarn.id,
-                yarnName: yarn.name,
-                yarnPricePerGram: yarn.pricePerGram,
-                usedWeightGrams: parseDouble(row.gramsController.text),
-              );
+              final YarnUsage usage = _usageOf(row, FormReader());
 
               return Container(
+                // Sem a chave, remover uma linha trocava o item das outras.
+                key: ObjectKey(row),
                 margin: const EdgeInsets.only(bottom: 10),
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
@@ -1371,7 +1634,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                                     DropdownMenuItem<String>(
                                       value: y.id,
                                       child: Text(
-                                        '${y.name} (${y.stockWeightGrams.toStringAsFixed(0)}g)',
+                                        '${y.name} (${formatFixed(y.stockWeightGrams, 0)}g)',
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ))
@@ -1383,7 +1646,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                             },
                           ),
                         ),
-                        if (_rows.length > 1) ...<Widget>[
+                        if (_rows.length > 1 || _isQuote) ...<Widget>[
                           const SizedBox(width: 8),
                           IconButton(
                             icon: const Icon(
@@ -1407,7 +1670,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                       decoration: InputDecoration(
                         labelText: 'Quantidade usada (g)',
                         helperText:
-                            'Disponivel: ${yarn.stockWeightGrams.toStringAsFixed(0)}g',
+                            'Disponível: ${formatFixed(yarn.stockWeightGrams, 0)}g',
                         filled: true,
                         fillColor: Colors.white,
                         border: OutlineInputBorder(
@@ -1443,8 +1706,10 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
               );
             }),
             TextButton.icon(
-              onPressed: () => setState(
-                  () => _rows.add(_YarnRow(widget.yarns.first.id))),
+              onPressed: widget.yarns.isEmpty
+                  ? null
+                  : () => setState(
+                      () => _rows.add(_YarnRow(widget.yarns.first.id))),
               icon: const Icon(Icons.add_circle_outline, size: 18),
               label: const Text('Adicionar outra linha'),
             ),
@@ -1469,7 +1734,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
-                        'Calcular gramas pelo peso da peca',
+                        'Calcular gramas pelo peso da peça',
                         style: TextStyle(
                             fontSize: 13,
                             color: _kAccent,
@@ -1501,7 +1766,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     const Text(
-                      'Pese a peca pronta e informe os pesos abaixo.',
+                      'Pese a peça pronta e informe os pesos abaixo.',
                       style: TextStyle(
                           fontSize: 12, color: Color(0xFF92400E)),
                     ),
@@ -1532,7 +1797,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                                     decimal: true),
                             onChanged: (_) => setState(() {}),
                             decoration: const InputDecoration(
-                              labelText: 'Peca pronta (g)',
+                              labelText: 'Peça pronta (g)',
                               helperText: 'Peso total',
                               suffixText: 'g',
                               isDense: true,
@@ -1544,15 +1809,17 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                     const SizedBox(height: 10),
                     Builder(builder: (_) {
                       final double base =
-                          parseDouble(_baseMaterialsWeightCtrl.text);
+                          parseDouble(_baseMaterialsWeightCtrl.text,
+        thousands: true);
                       final double finished =
-                          parseDouble(_finishedWeightCtrl.text);
+                          parseDouble(_finishedWeightCtrl.text,
+        thousands: true);
                       final double yarnUsed = finished - base;
                       return Row(
                         children: <Widget>[
                           if (yarnUsed > 0)
                             Text(
-                              'Linha usada: ${yarnUsed.toStringAsFixed(1)}g',
+                              'Linha usada: ${formatFixed(yarnUsed, 1)}g',
                               style: const TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w700,
@@ -1561,6 +1828,9 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                             ),
                           const Spacer(),
                           OutlinedButton(
+                            // O tema usa largura infinita, invalida em Row.
+                            style: OutlinedButton.styleFrom(
+                                minimumSize: const Size(88, 44)),
                             onPressed:
                                 yarnUsed > 0 && _rows.length == 1
                                     ? _applyWeightCalc
@@ -1574,7 +1844,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
                       const Padding(
                         padding: EdgeInsets.only(top: 6),
                         child: Text(
-                          'Com multiplas linhas, informe os gramas manualmente.',
+                          'Com múltiplas linhas, informe as gramas manualmente.',
                           style: TextStyle(
                               fontSize: 11, color: Color(0xFF92400E)),
                         ),
@@ -1602,12 +1872,12 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
             const SizedBox(height: 12),
             TextField(
               controller: _laborCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              // O teclado numerico não tem ':' (para digitar 1:30).
+              keyboardType: TextInputType.datetime,
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: 'Tempo gasto (horas)',
-                helperText: 'Ex: 1.5 = 1h 30min',
+                helperText: 'Ex: 1:30 ou 1.5 = 1h 30min',
                 prefixIcon: Icon(Icons.access_time_outlined),
               ),
             ),
@@ -1618,27 +1888,51 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
               totalYarnCost: totalYarnCost,
               otherCost: otherCost,
             ),
+            if (!_isEdit) ...<Widget>[
+              const SizedBox(height: 16),
+              TextField(
+                controller: _quantityCtrl,
+                keyboardType: TextInputType.number,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  labelText: 'Quantidade de peças iguais',
+                  helperText: quantity > 1
+                      ? 'Total: ${widget.currency.format(preview.suggestedPrice * quantity)}. '
+                          'Medidas e tempo são de UMA peça.'
+                      : 'Medidas e tempo são de UMA peça.',
+                  helperMaxLines: 2,
+                  prefixIcon: const Icon(Icons.copy_all_outlined),
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
+            FormError(_error),
+            if (_isQuote) ...<Widget>[
+              FilledButton.icon(
+                onPressed: _shareQuote,
+                icon: const Icon(Icons.share_rounded),
+                label: const Text('Enviar orçamento'),
+              ),
+              const SizedBox(height: 10),
+            ],
             FilledButton.icon(
+              style: _isQuote
+                  ? FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF64748B))
+                  : null,
               onPressed: () {
-                final CreateCrochetPieceInput input =
-                    CreateCrochetPieceInput(
-                  pieceName: _nameCtrl.text.trim(),
-                  yarnUsages: _buildUsages(),
-                  otherMaterialsCost: parseDouble(_otherCostCtrl.text),
-                  laborHours: parseDouble(_laborCtrl.text),
-                );
-                final String? error = input.validate();
-                if (error != null) {
-                  ScaffoldMessenger.of(context)
-                      .showSnackBar(SnackBar(content: Text(error)));
+                final FormReader reader = FormReader();
+                final CreateCrochetPieceInput input = _readInput(reader);
+                final String? err =
+                    reader.error ?? input.validate() ?? widget.onSave(input);
+                if (err != null) {
+                  setState(() => _error = err);
                   return;
                 }
-                widget.onSave(input);
                 Navigator.pop(context);
               },
               icon: const Icon(Icons.check_rounded),
-              label: const Text('Salvar peca'),
+              label: Text(_isQuote ? 'Registrar esta peça' : 'Salvar peça'),
             ),
           ],
         ),
@@ -1648,7 +1942,7 @@ class _PieceFormSheetState extends State<_PieceFormSheet> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Preview de precificacao
+// Preview de precificação
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _PricingPreviewCard extends StatelessWidget {
@@ -1695,7 +1989,7 @@ class _PricingPreviewCard extends StatelessWidget {
                 Icon(Icons.calculate_outlined,
                     color: Colors.white, size: 18),
                 SizedBox(width: 8),
-                Text('Preview de precificacao',
+                Text('Quanto cobrar',
                     style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w700,
@@ -1717,15 +2011,15 @@ class _PricingPreviewCard extends StatelessWidget {
                 const Divider(height: 16),
                 _PRow('Valor da hora',
                     currency.format(preview.hourlyValue)),
-                _PRow('Custo de trabalho',
+                _PRow('Seu trabalho',
                     currency.format(preview.laborCost)),
-                _PRow('Custo operacional',
+                _PRow('Trabalho + custos fixos',
                     currency.format(preview.operationalCost)),
-                _PRow('Custo de producao',
+                _PRow('Custo da peça',
                     currency.format(preview.productionCost),
                     bold: true),
                 const Divider(height: 16),
-                _PRow('Preco sugerido',
+                _PRow('Preço sugerido',
                     currency.format(preview.suggestedPrice),
                     bold: true,
                     color: const Color(0xFF059669),
@@ -1769,17 +2063,20 @@ class _PRow extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Detalhes da peca de croche
+// Detalhes da peça de crochê
 // ─────────────────────────────────────────────────────────────────────────────
 
 void _showPieceDetails(
   BuildContext context,
   CrochetPieceRecord piece,
-  NumberFormat currency,
-) {
+  NumberFormat currency, {
+  required VoidCallback onEdit,
+  required VoidCallback? onDuplicate,
+}) {
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
@@ -1822,6 +2119,40 @@ void _showPieceDetails(
               ],
             ),
             const SizedBox(height: 20),
+            Row(
+              children: <Widget>[
+                if (!piece.isSold) ...<Widget>[
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        onEdit();
+                      },
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: const Text('Editar'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                ],
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onDuplicate == null
+                        ? null
+                        : () {
+                            Navigator.pop(ctx);
+                            onDuplicate();
+                          },
+                    icon: const Icon(Icons.copy_rounded, size: 18),
+                    label: const Text('Duplicar'),
+                  ),
+                ),
+              ],
+            ),
+            if (piece.photoName != null) ...<Widget>[
+              const SizedBox(height: 16),
+              PieceThumb(piece.photoName, height: 220),
+            ],
+            const SizedBox(height: 20),
             const _FormSection(label: 'Linhas usadas', color: _kPrimary),
             const SizedBox(height: 10),
             ...piece.yarnUsages.map((YarnUsage u) => Container(
@@ -1841,7 +2172,7 @@ void _showPieceDetails(
                               color: _kTextDark)),
                       const SizedBox(height: 4),
                       Text(
-                        '${u.usedWeightGrams.toStringAsFixed(1)}g  x  R\$ ${u.yarnPricePerGram.toStringAsFixed(4)}/g',
+                        '${formatFixed(u.usedWeightGrams, 1)}g  x  R\$ ${formatFixed(u.yarnPricePerGram, 4)}/g',
                         style: const TextStyle(
                             fontSize: 12, color: _kTextMid),
                       ),
@@ -1866,23 +2197,32 @@ void _showPieceDetails(
                 bold: true),
             const SizedBox(height: 16),
             const _FormSection(
-                label: 'Precificacao (4 pilares)', color: _kPrimary),
+                label: 'Como o preço foi calculado', color: _kPrimary),
             const SizedBox(height: 10),
             _PRow('Valor da hora', currency.format(piece.hourlyValue)),
             _PRow(
-                'Trabalho (${piece.laborHours.toStringAsFixed(2)}h)',
+                'Trabalho (${formatFixed(piece.laborHours, 2)}h)',
                 currency.format(piece.laborCost)),
-            _PRow('Custo operacional',
+            _PRow('Trabalho + custos fixos',
                 currency.format(piece.operationalCost)),
-            _PRow('Custo de producao',
+            _PRow('Custo da peça',
                 currency.format(piece.productionCost),
                 bold: true),
             const Divider(height: 24),
-            _PRow('Preco final sugerido',
+            _PRow('Preço final sugerido',
                 currency.format(piece.suggestedPrice),
                 bold: true,
                 color: const Color(0xFF059669),
                 large: true),
+            if (piece.isSold) ...<Widget>[
+              _PRow('Vendida por', currency.format(piece.soldPrice),
+                  bold: true),
+              _PRow('Lucro da venda', currency.format(piece.saleProfit),
+                  bold: true,
+                  color: piece.saleProfit! < 0
+                      ? const Color(0xFFB91C1C)
+                      : const Color(0xFF059669)),
+            ],
           ],
         ),
       );
@@ -1891,8 +2231,30 @@ void _showPieceDetails(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Confirmacao: excluir peca
+// Confirmacao: excluir peça
 // ─────────────────────────────────────────────────────────────────────────────
+
+Future<void> _handleSale(
+  BuildContext context,
+  CrochetPieceRecord piece,
+  NumberFormat currency,
+  void Function(String id, double? price) onSetSale,
+) async {
+  if (piece.isSold) {
+    if (await confirmUndoSale(context, piece.pieceName)) {
+      onSetSale(piece.id, null);
+    }
+    return;
+  }
+  final double? price = await promptSalePrice(
+    context,
+    pieceName: piece.pieceName,
+    suggestedPrice: piece.suggestedPrice,
+    productionCost: piece.productionCost,
+    currency: currency,
+  );
+  if (price != null) onSetSale(piece.id, price);
+}
 
 void _confirmDeletePiece(
   BuildContext context,
@@ -1906,11 +2268,11 @@ void _confirmDeletePiece(
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       icon: const Icon(Icons.delete_outline_rounded,
           color: Color(0xFFEF4444), size: 36),
-      title: const Text('Excluir peca',
+      title: const Text('Excluir peça',
           style: TextStyle(fontWeight: FontWeight.w700)),
       content: Text(
         'Deseja excluir "${piece.pieceName}"?\n'
-        'O consumo das linhas sera devolvido ao estoque.',
+        '${piece.isSold ? 'Ela ja foi vendida: o material NAO volta ao estoque e a venda sai dos totais.' : 'O consumo das linhas sera devolvido ao estoque.'}',
       ),
       actions: <Widget>[
         TextButton(

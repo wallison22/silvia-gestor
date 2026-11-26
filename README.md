@@ -20,4 +20,4 @@ Aplicativo Flutter para:
   - Custo de trabalho = horas da peca x valor da hora
   - Custo operacional = custo de trabalho + % custos fixos
   - Custo de producao = custo operacional + materiais
-  - Preco final sugerido = custo de producao + % lucro
+  - Preco final sugerido = custo de producao / (1 - % lucro), ou seja, o lucro e margem sobre o preco de venda
